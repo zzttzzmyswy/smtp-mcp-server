@@ -1,0 +1,29 @@
+# systemd 单元示例 —— smtp-mcp-server
+# 安装：cp smtp-mcp.service /etc/systemd/system/ 后 systemctl enable --now smtp-mcp
+[Unit]
+Description=SMTP MCP Server (MCP streamable HTTP / SSE email sender)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 修改为实际二进制与配置路径
+ExecStart=/opt/smtp-mcp/smtp-mcp-server /etc/smtp-mcp/config.toml
+Environment=SMTP_PASS=____put_real_authorization_code_here__  # 真实授权码勿写入仓库/勿落盘明文
+WorkingDirectory=/opt/smtp-mcp
+Restart=on-failure
+RestartSec=3
+# 低内存 + 安全加固
+MemoryMax=64M
+LimitNOFILE=1024
+NoNewPrivileges=true
+PrivateTmp=false
+ProtectSystem=full
+ProtectHome=true
+
+# 可选：最小化权限（独立用户运行）
+User=smtpmcp
+Group=smtpmcp
+
+[Install]
+WantedBy=multi-user.target

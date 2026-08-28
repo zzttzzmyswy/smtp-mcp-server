@@ -1,0 +1,38 @@
+# smtp-mcp-server 配置示例（TOML）
+# 复制为 config.toml 后按需修改；敏感值（smtp.pass）用环境变量占位，勿提交真实授权码。
+
+[server]
+# 服务默认只监听内网，公网流量由 nginx 反代并终结 TLS
+addr = "127.0.0.1"
+port = 8202
+
+[auth]
+# 多个访问密钥，请求任选其一（Authorization: Bearer <key> 或 X-API-Key: <key>）
+keys = ["replace-with-key-1", "replace-with-key-2"]
+
+[smtp]
+host = "smtp.126.com"
+port = 465
+# ssl（465 隐式 TLS） | starttls（587） | none
+tls = "ssl"
+from = "your-sender@126.com"
+user = "your-sender@126.com"
+# SMTP 授权码不是登录密码；建议通过环境变量注入（smtp.pass 为空时也会回退读取 env SMTP_PASS）
+pass = "${SMTP_PASS}"
+
+[security]
+# 收件人白名单：完整地址或域名后缀（如 "example.com"）；空 = 不限
+receiver_whitelist = []
+# 单个附件上限 10MB
+max_attachment_bytes = 10485760
+# 单次请求全部附件总上限 10MB
+max_total_attachment_bytes = 10485760
+# 单个 HTTP 请求体上限（略大于附件上限以容纳 base64 膨胀，约 10MB * 4/3 + 余量）
+max_request_bytes = 14680064
+# 附件扩展名白名单（小写，不带点）；空 = 不限
+allowed_attachment_extensions = ["pdf", "png", "jpg", "jpeg", "gif", "bmp", "webp", "svg", "txt", "md", "log", "csv", "json", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "zip", "gz", "tar", "7z"]
+
+# 可选：直连场景启用自带 TLS（默认架构下由 nginx 终结 TLS，可留空）
+# [tls]
+# cert = "/etc/smtp-mcp/cert.pem"
+# key = "/etc/smtp-mcp/key.pem"

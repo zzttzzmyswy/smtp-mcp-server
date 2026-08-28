@@ -1,0 +1,48 @@
+# nginx 反代配置示例 —— 对外提供 https://<host>/smtp-mcp/mcp 等路径
+#
+# 架构说明：
+#   - 服务本身监听内网 127.0.0.1:8202（HTTP），不直接暴露公网
+#   - nginx 在此终结 TLS，把 /smtp-mcp 下的路径反代到该服务
+#   - MCP 客户端 Base URL：https://<host>/smtp-mcp（streamable HTTP 走 /mcp）
+#     认证：Authorization: Bearer <key>
+#   - legacy：https://<host>/smtp-mcp/sse  +  POST /smtp-mcp/messages?session_id=...
+#
+# 用法：放入 /etc/nginx/conf.d/smtp-mcp.conf，证书换成实际的。
+# nginx -t && systemctl reload nginx
+
+# --- 方式 A：独立 server 块（推荐，若想给服务单独域名/路径） ---
+# server {
+#     listen 443 ssl;
+#     server_name smtp-mcp.example.com;
+#
+#     ssl_certificate     /etc/nginx/certs/example.crt;
+#     ssl_certificate_key /etc/nginx/certs/example.key;
+#     ssl_protocols       TLSv1.2 TLSv1.3;
+#
+#     client_max_body_size 16m;   # 覆盖请求体上限（约 14MB），必须 ≥ max_request_bytes
+#
+#     location /smtp-mcp/ {
+#         proxy_pass http://127.0.0.1:8202/;   # 结尾斜杠：去掉 /smtp-mcp 前缀后转发
+#         proxy_http_version 1.1;
+#         proxy_set_header Host $host;
+#         proxy_set_header X-Real-IP $remote_addr;
+#         proxy_set_header Connection "";
+#         chunked_transfer_encoding on;        # SSE 长连接需要
+#         proxy_buffering off;                 # SSE：必须关闭缓冲，事件即时推送
+#         proxy_read_timeout 3600s;            # SSE 长会话
+#         proxy_cache off;
+#     }
+# }
+
+# --- 方式 B：挂到现有 443 server 上，只需加这段 location（适合本工作区：172.26.13.24） ---
+# location /smtp-mcp/ {
+#     proxy_pass http://127.0.0.1:8202/;
+#     proxy_http_version 1.1;
+#     proxy_set_header Host $host;
+#     proxy_set_header X-Real-IP $remote_addr;
+#     proxy_set_header Connection "";
+#     chunked_transfer_encoding on;
+#     proxy_buffering off;
+#     proxy_read_timeout 3600s;
+#     proxy_cache off;
+# }
