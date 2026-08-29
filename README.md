@@ -119,12 +119,23 @@ TLS 请在 443 server 块配置证书后复用同一段 location。
   "subject": "主题（支持中文，自动 RFC2047 编码）",
   "body": "纯文本正文",
   "receiver": ["a@example.com", "b@example.com"],
+  "html_body": "可选：AI Agent 自带完整 HTML 正文（可含 <table>/<img> 等），提供后优先级最高，不使用默认模板",
+  "brand": "可选：页眉品牌名（默认 Multica MCP）",
+  "greeting": "可选：问候语（默认“您好：”，空串不显示问候行）",
+  "sign_name": "可选：落款人名（默认沿用品牌名，空串不显示签名区）",
   "attachments": [
     { "filename": "report.pdf",
       "content": "<base64 内容，解码后 ≤10MB>" }
   ]
 }
 ```
+
+### 默认 HTML 模板
+
+- **未提供 `html_body`** 时，自动使用内置默认模板渲染邮件：响应式（桌面/手机自适应）、经典大气 + 中国元素（藏青主色、金色回纹、朱红印章、衬线宋体标题）
+- `body` 纯文本按空行分段转成 HTML 段落，HTML 全部转义防注入；`subject` 作标题、`brand` 作品牌（页眉/印章）、`sign_name` 作落款
+- **提供 `html_body`** 时（AI Agent 自带模板），优先使用它，其余参数忽略
+- 支持正文区块：`<p class="mail-p">` 段落、`<table class="mail-table">` 表格、`<img class="mail-img">` 图片、`.mail-callout` 高亮、`.mail-quote` 引用、`.mail-list` 列表、`<a class="mail-btn">` 按钮
 
 返回值示例（成功）：
 
@@ -165,6 +176,7 @@ src/
   main.rs         HTTP 层：axum 路由 /mcp、/sse、/messages、认证中间件、限量读 body、可选 TLS
   mcp.rs          MCP JSON-RPC 处理：initialize/tools/list/tools/call、send_email 编排与审计
   mail.rs         lettre SMTP 发送、收件人校验/白名单、MIME/附件构建、mime 推断
+  template.rs     默认 HTML 模板渲染（include_str! 内嵌）、纯文本转 HTML、转义
   attachments.rs  附件 base64 解码/大小与类型校验/临时目录落盘与清理
   auth.rs         密钥认证：SHA-256 摘要 + 恒定时间比较
   config.rs       TOML 配置解析、env 插值、默认值

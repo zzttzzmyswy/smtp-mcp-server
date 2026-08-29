@@ -69,14 +69,15 @@ fn mime_for(filename: &str) -> mime::Mime {
     }
 }
 
-/// 发送一封电子邮件。附件内容从 StagedAttachments 指向的临时文件读取（已通过校验），
+/// 发送一封电子邮件。`html_body` 为最终邮件正文（HTML），已由调用方完成模板渲染；
+/// 附件内容从 StagedAttachments 指向的临时文件读取（已通过校验），
 /// 发送完成后由调用方负责 Drop 清理。
 pub async fn send_email(
     smtp: &Smtp,
     receiver_whitelist: &[String],
     receivers: Vec<String>,
     subject: String,
-    body: String,
+    html_body: String,
     staged: &StagedAttachments,
 ) -> Result<SendReport, String> {
     if receivers.is_empty() {
@@ -114,9 +115,9 @@ pub async fn send_email(
         .parse()
         .map_err(|_| format!("smtp.from 不是合法的邮箱地址: {}", smtp.from))?;
 
-    // 组装 MIME：正文 + 附件
-    let mut mp = MultiPart::mixed().singlepart(SinglePart::plain(body.clone()));
-
+    // 组装 MIME：HTML 正文 + 附件
+    let html_part = SinglePart::html(html_body.clone());
+    let mut parts: Vec<lettre::message::SinglePart> = Vec::new();
     let mut total_size = 0usize;
     for f in &staged.files {
         let bytes = std::fs::read(&f.path)
@@ -125,17 +126,20 @@ pub async fn send_email(
         let mime = mime_for(&f.filename);
         let ct = ContentType::parse(mime.to_string().as_str())
             .map_err(|e| format!("附件 MIME 解析失败: {}", e))?;
-        let part = Attachment::new(f.filename.clone()).body(bytes, ct);
-        mp = mp.singlepart(part);
+        parts.push(Attachment::new(f.filename.clone()).body(bytes, ct));
     }
 
     let mut builder = Message::builder().from(from).subject(subject.clone());
     for t in &parsed_receivers {
         builder = builder.to(t.clone());
     }
-    let message = if staged.files.is_empty() {
-        builder.body(body.clone()).map_err(|e| e.to_string())?
+    let message = if parts.is_empty() {
+        builder.singlepart(html_part).map_err(|e| e.to_string())?
     } else {
+        let mut mp = MultiPart::mixed().singlepart(html_part);
+        for p in parts {
+            mp = mp.singlepart(p);
+        }
         builder.multipart(mp).map_err(|e| e.to_string())?
     };
 

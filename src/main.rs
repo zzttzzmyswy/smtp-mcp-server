@@ -3,6 +3,7 @@ mod auth;
 mod config;
 mod mail;
 mod mcp;
+mod template;
 
 use axum::body::Bytes;
 use axum::extract::{Query, State};
@@ -95,10 +96,7 @@ async fn auth_middleware(
 // ---------- 工具函数 ----------
 
 /// 限量读取请求体；超限返回 413
-async fn read_body_limited(
-    body: axum::body::Body,
-    limit: usize,
-) -> Result<Bytes, Box<Response>> {
+async fn read_body_limited(body: axum::body::Body, limit: usize) -> Result<Bytes, Box<Response>> {
     axum::body::to_bytes(body, limit).await.map_err(|_| {
         Box::new(
             (

@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<title>{{TITLE}}</title>
+</head>
+<body style="margin:0;padding:0;background-color:#eef0f4;">
+<!-- 邮件预览文字 -->
+<div style="display:none;max-height:0;overflow:hidden;mso-hide:all;">{{PREHEADER}}</div>
+<center>
+  <!-- 外框：桌面 640px，移动端全宽（media query 覆盖） -->
+  <table role="presentation" class="outer" width="640" cellspacing="0" cellpadding="0" border="0" align="center" style="width:640px;max-width:100%;background-color:#eef0f4;">
+    <!-- ===== 通栏深色页眉（藏青渐变 + 金色回纹双线） ===== -->
+    <tr>
+      <td bgcolor="#1f3a5f" style="background-image:linear-gradient(135deg,#1f3a5f 0%,#14304e 100%); padding:46px 40px 34px 40px;" class="pad">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+          <tr>
+            <td align="left" style="font-family:'Helvetica Neue',Helvetica,Arial,'Microsoft YaHei',sans-serif;font-size:17px;font-weight:700;color:#ffffff;letter-spacing:2px;">{{BRAND}}</td>
+            <td align="right" style="font-family:Georgia,'Times New Roman','Songti SC',serif;font-size:12px;color:#c9a35c;letter-spacing:1px;">{{DATE}}</td>
+          </tr>
+        </table>
+        <!-- 金色回纹双线 -->
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin-top:22px;">
+          <tr>
+            <td style="border-top:1px solid #c9a35c;border-bottom:1px solid #c9a35c;height:6px;font-size:0;line-height:0;">&nbsp;</td>
+          </tr>
+        </table>
+        {{KICKER_CELL}}
+        <div style="margin-top:8px;font-family:Georgia,'Noto Serif SC','Songti SC','STSong',serif;font-size:34px;line-height:1.4;color:#ffffff;font-weight:600;letter-spacing:1px;" class="titlex">{{TITLE}}</div>
+        <!-- 印章（朱红方章 · 楷体白字） -->
+        <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin-top:18px;">
+          <tr>
+            <td style="border:2px solid #c0392b;border-radius:4px;padding:5px 9px;font-family:KaiTi,'STKaiti','Kaiti SC',serif;font-size:15px;color:#c0392b;letter-spacing:3px;background-color:#ffffff;">{{SEAL}}</td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+    <!-- ===== 正文白卡片 ===== -->
+    <tr>
+      <td align="center" bgcolor="#ffffff" style="padding:34px 40px 30px 40px;" class="pad">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+          <tr>
+            <td align="left">
+              {{GREETING_CELL}}
+              {{BODY}}
+              {{SIGN_CELL}}
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+    <!-- ===== 通栏深色页脚 ===== -->
+    <tr>
+      <td bgcolor="#14304e" style="padding:26px 40px 30px 40px;" class="pad">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin-bottom:14px;">
+          <tr><td style="border-top:1px solid #2f4d75;border-bottom:1px solid #2f4d75;height:4px;font-size:0;line-height:0;">&nbsp;</td></tr>
+        </table>
+        <div style="font-family:'Helvetica Neue',Helvetica,Arial,'Microsoft YaHei',sans-serif;font-size:11px;line-height:2;color:#8fa3bd;">{{FOOTER}}</div>
+        <div style="font-family:'Helvetica Neue',Helvetica,Arial,'Microsoft YaHei',sans-serif;font-size:11px;color:#5d7391;margin-top:8px;">本邮件由系统自动发送，请勿直接回复。</div>
+      </td>
+    </tr>
+  </table>
+</center>
+
+<!-- 正文内容区块：文本 / 表格 / 图片 / 引用 / 列表 / 按钮 / 两栏 / 印章 -->
+<style>
+  @media only screen and (max-width:620px) {
+    .outer { width:100% !important; }
+    .pad { padding-left:18px !important; padding-right:18px !important; }
+    .titlex { font-size:26px !important; }
+    table.mail-table, table.mail-table tbody, table.mail-table tr, table.mail-table td { width:100% !important; }
+  }
+  .mail-block { margin:0 0 20px 0; }
+  .mail-h2 { font-family:Georgia,'Noto Serif SC','Songti SC','STSong',serif; font-size:19px; color:#1f3a5f; font-weight:600; margin:28px 0 12px 0; letter-spacing:1px; }
+  .mail-p  { margin:0 0 14px 0; font-family:'Helvetica Neue',Helvetica,Arial,'Microsoft YaHei',sans-serif; font-size:15px; line-height:1.9; color:#3a4556; }
+  .mail-small { font-size:13px; color:#8792a3; }
+  table.mail-table { width:100%; border-collapse:collapse; margin:14px 0 22px 0; font-family:'Helvetica Neue',Helvetica,Arial,'Microsoft YaHei',sans-serif; border:1px solid #dde3ec; border-radius:8px; overflow:hidden; }
+  table.mail-table th { background-color:#1f3a5f; color:#ffffff; font-size:13px; font-weight:600; text-align:left; padding:11px 14px; }
+  table.mail-table td { font-size:13px; color:#3a4556; padding:11px 14px; border-bottom:1px solid #eef1f6; }
+  table.mail-table tr:last-child td { border-bottom:none; }
+  table.mail-table tr:nth-child(even) td { background-color:#fafbfd; }
+  .mail-img { width:100%; max-width:560px; border-radius:10px; margin:6px 0 20px 0; }
+  .mail-quote { border-left:3px solid #c9a35c; background-color:#fbf7ee; border-radius:0 8px 8px 0; padding:14px 18px; margin:14px 0 22px 0; font-family:Georgia,'Noto Serif SC','Songti SC','STSong',serif; font-size:14px; line-height:1.9; color:#5a4a2a; }
+  .mail-callout { background-color:#fdf1ee; border:1px solid #f0d4ce; border-radius:8px; padding:14px 18px; margin:14px 0 22px 0; font-family:'Helvetica Neue',Helvetica,Arial,'Microsoft YaHei',sans-serif; font-size:14px; line-height:1.9; color:#8a3b30; }
+  .mail-callout b { color:#a63a2f; }
+  .mail-list { margin:0 0 22px 0; padding:0; font-family:'Helvetica Neue',Helvetica,Arial,'Microsoft YaHei',sans-serif; font-size:15px; line-height:2.1; color:#3a4556; }
+  .mail-list li { margin-left:20px; }
+  a.mail-btn { display:inline-block; background-color:#a63a2f; color:#ffffff !important; text-decoration:none; padding:12px 30px; border-radius:6px; font-family:'Helvetica Neue',Helvetica,Arial,'Microsoft YaHei',sans-serif; font-size:14px; letter-spacing:1px; margin:8px 0 22px 0; }
+  table.mail-cols { width:100%; margin:14px 0 22px 0; }
+  table.mail-cols td { vertical-align:top; }
+  .mail-seal { display:inline-block; border:2px solid #c0392b; border-radius:3px; padding:3px 9px; font-family:KaiTi,'STKaiti','Kaiti SC',serif; font-size:14px; color:#c0392b; letter-spacing:3px; background-color:#ffffff; }
+</style>
+</body>
+</html>
