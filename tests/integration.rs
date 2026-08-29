@@ -32,9 +32,9 @@ pass = "${{SMTP_PASS}}"
 
 [security]
 receiver_whitelist = ["allowed.com"]
-max_attachment_bytes = 10485760
-max_total_attachment_bytes = 10485760
-max_request_bytes = 14680064
+max_attachment_bytes = 1048576
+max_total_attachment_bytes = 1048576
+max_request_bytes = 2097152
 allowed_attachment_extensions = ["pdf", "txt"]
 "#,
         port = port,
@@ -260,7 +260,7 @@ fn tools_call_oversized_attachment_rejected() {
     spawn_runtime_sync(async {
         let port = 18206;
         let _server = Server::start(port).await;
-        let big = vec![b'x'; 10 * 1024 * 1024 + 1];
+        let big = vec![b'x'; 1024 * 1024 + 1];
         let b64 = base64::engine::general_purpose::STANDARD.encode(&big);
         let call = mcp_req(
             "tools/call",

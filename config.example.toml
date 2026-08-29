@@ -23,12 +23,12 @@ pass = "${SMTP_PASS}"
 [security]
 # 收件人白名单：完整地址或域名后缀（如 "example.com"）；空 = 不限
 receiver_whitelist = []
-# 单个附件上限 10MB
-max_attachment_bytes = 10485760
-# 单次请求全部附件总上限 10MB
-max_total_attachment_bytes = 10485760
-# 单个 HTTP 请求体上限（略大于附件上限以容纳 base64 膨胀，约 10MB * 4/3 + 余量）
-max_request_bytes = 14680064
+# 单个附件上限 1MB（MCP JSON base64 传输，二进制过大不便）
+max_attachment_bytes = 1048576
+# 单次请求全部附件总上限 1MB
+max_total_attachment_bytes = 1048576
+# 单个 HTTP 请求体上限（略大于附件上限以容纳 base64 膨胀 ≈ 1MB * 4/3 + 余量）
+max_request_bytes = 2097152
 # 附件扩展名白名单（小写，不带点）；空 = 不限
 allowed_attachment_extensions = ["pdf", "png", "jpg", "jpeg", "gif", "bmp", "webp", "svg", "txt", "md", "log", "csv", "json", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "zip", "gz", "tar", "7z"]
 

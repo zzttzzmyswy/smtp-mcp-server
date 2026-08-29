@@ -12,7 +12,7 @@
 - **`send_email` 工具**：`subject`、`body`、`receiver[]`（多收件人）、`attachments[]`（可选，base64 内容 + 文件名）
 - **密钥认证**：配置多个 key，请求携带任一（`Authorization: Bearer <key>` 或 `X-API-Key: <key>`）；恒定时间比较（SHA-256 摘要 + 恒定时间异或累积），错误/缺失 key 返回统一 `401`，无数据泄露
 - **SMTP**：支持 126 `smtp.126.com` 465/SSL、587/STARTTLS，用 **SMTP 授权码**（非登录密码）认证
-- **附件安全**：单个附件 ≤10MB、单次总量 ≤10MB（默认）、扩展名白名单、大小/类型非法在落盘前拒绝；通过校验的附件写入**临时目录**，发送完成后自动清理
+- **附件安全**：单个附件 ≤1MB、单次总量 ≤1MB（默认）、扩展名白名单、大小/类型非法在落盘前拒绝；通过校验的附件写入**临时目录**，发送完成后自动清理
 - **收件人白名单**（空 = 不限；可配完整邮箱或域后缀）
 - **可选服务端 TLS**（cert/key，直连场景）——默认架构下 TLS 由 nginx 终结
 - **日志安全**：不打印 key / 授权码 / 邮件正文；`send_email` 记录审计级日志（收件人、主题长度、附件数与大小）
@@ -65,9 +65,9 @@ cp config.example.toml /etc/smtp-mcp/config.toml
 | | `from` / `user` | 发件人 / SMTP 用户名 | 必填 |
 | | `pass` | SMTP 授权码（支持 `${ENV}`；缺省回退读 `SMTP_PASS`） | 必填（运行时） |
 | `security` | `receiver_whitelist` | 收件人白名单（空=不限；条目可为完整邮箱或域后缀） | `[]` |
-| | `max_attachment_bytes` | 单附件上限 | `10485760` (10MB) |
-| | `max_total_attachment_bytes` | 单次所有附件总上限 | `10485760` (10MB) |
-| | `max_request_bytes` | 单请求体上限（含 base64 膨胀） | `14680064` (~14MB) |
+| | `max_attachment_bytes` | 单附件上限 | `1048576` (1MB) |
+| | `max_total_attachment_bytes` | 单次所有附件总上限 | `1048576` (1MB) |
+| | `max_request_bytes` | 单请求体上限（含 base64 膨胀） | `2097152` (~2MB) |
 | | `allowed_attachment_extensions` | 附件扩展名白名单（小写不带点，空=不限） | 见示例 |
 | `tls`（可选） | `cert` / `key` | PEM 证书/私钥路径，启用后服务自带 TLS | 未启用 |
 
@@ -125,7 +125,7 @@ TLS 请在 443 server 块配置证书后复用同一段 location。
   "sign_name": "可选：落款人名（默认沿用品牌名，空串不显示签名区）",
   "attachments": [
     { "filename": "report.pdf",
-      "content": "<base64 内容，解码后 ≤10MB>" }
+      "content": "<base64 内容，解码后 ≤1MB>" }
   ]
 }
 ```

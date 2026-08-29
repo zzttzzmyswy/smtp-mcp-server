@@ -122,7 +122,7 @@ mod tests {
             receiver_whitelist: vec![],
             max_attachment_bytes: max_att,
             max_total_attachment_bytes: max_total,
-            max_request_bytes: 14 * 1024 * 1024,
+            max_request_bytes: 2 * 1024 * 1024,
             allowed_attachment_extensions: exts.iter().map(|s| s.to_string()).collect(),
         }
     }
@@ -156,6 +156,31 @@ mod tests {
             &[AttachmentInput {
                 filename: "big.bin".into(),
                 content: enc(&[0u8; 5]),
+            }],
+            &s,
+        )
+        .unwrap_err();
+        assert!(err.contains("超过单附件上限"), "err: {}", err);
+    }
+
+    #[test]
+    fn default_1mb_boundary() {
+        let s = security(1024 * 1024, 1024 * 1024, &[]);
+        // 恰好 1MB：通过
+        let ok = stage_attachments(
+            &[AttachmentInput {
+                filename: "a.bin".into(),
+                content: enc(&[0u8; 1024 * 1024]),
+            }],
+            &s,
+        )
+        .unwrap();
+        assert_eq!(ok.files.len(), 1);
+        // 1MB + 1：拒绝
+        let err = stage_attachments(
+            &[AttachmentInput {
+                filename: "b.bin".into(),
+                content: enc(&[0u8; 1024 * 1024 + 1]),
             }],
             &s,
         )

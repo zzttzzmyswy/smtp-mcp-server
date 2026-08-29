@@ -66,13 +66,13 @@ pub struct Security {
     /// 收件人白名单；空 = 不限
     #[serde(default)]
     pub receiver_whitelist: Vec<String>,
-    /// 单个附件最大字节数（默认 10MB）
+    /// 单个附件最大字节数（默认 1MB）
     #[serde(default = "default_max_attachment_bytes")]
     pub max_attachment_bytes: usize,
-    /// 单次请求所有附件总字节上限（默认 10MB）
+    /// 单次请求所有附件总字节上限（默认 1MB）
     #[serde(default = "default_max_attachment_bytes")]
     pub max_total_attachment_bytes: usize,
-    /// 单个 JSON 请求体上限（遵循 MCP 后段，宽松于附件上限以容纳 base64 开销）
+    /// 单个 JSON 请求体上限（略大于附件上限以容纳 base64 膨胀）
     #[serde(default = "default_max_request_bytes")]
     pub max_request_bytes: usize,
     /// 附件扩展名白名单（小写，不带点）；空 = 不限
@@ -93,11 +93,11 @@ impl Default for Security {
 }
 
 fn default_max_attachment_bytes() -> usize {
-    10 * 1024 * 1024
+    1024 * 1024
 }
 
 fn default_max_request_bytes() -> usize {
-    14 * 1024 * 1024
+    2 * 1024 * 1024
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -195,7 +195,7 @@ pass = "placeholder"
         assert_eq!(cfg.auth.keys, vec!["key1", "key2"]);
         assert_eq!(cfg.smtp.host, "smtp.126.com");
         assert_eq!(cfg.smtp.pass.as_deref(), Some("placeholder"));
-        assert_eq!(cfg.security.max_attachment_bytes, 10 * 1024 * 1024);
+        assert_eq!(cfg.security.max_attachment_bytes, 1024 * 1024);
     }
 
     #[test]

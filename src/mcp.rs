@@ -96,7 +96,7 @@ fn send_email_tool_schema() -> Value {
                         },
                         "required": ["filename", "content"]
                     },
-                    "description": "可选附件列表（每个 ≤ 10MB）"
+                    "description": "可选附件列表（每个 ≤ 1MB）"
                 }
             },
             "required": ["subject", "body", "receiver"]
@@ -379,8 +379,8 @@ pass = "placeholder"
     #[tokio::test]
     async fn tools_call_rejects_oversized_attachment_without_smtp() {
         let s = state();
-        // 构造一个超过 10MB 的 base64 附件（即使 SMTP 不可达，也应在校验阶段被拒）
-        let big = vec![b'x'; 10 * 1024 * 1024 + 1];
+        // 构造一个超过 1MB 的 base64 附件（即使 SMTP 不可达，也应在校验阶段被拒）
+        let big = vec![b'x'; 1024 * 1024 + 1];
         let b64 = base64::engine::general_purpose::STANDARD.encode(&big);
         let req = make_request(
             "tools/call",
