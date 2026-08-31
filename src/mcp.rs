@@ -82,7 +82,7 @@ fn send_email_tool_schema() -> Value {
                     "minItems": 1,
                     "description": "收件人邮箱列表，至少一个"
                 },
-                "html_body": { "type": "string", "description": "可选：AI Agent 自带完整 HTML 正文（可含 <table>/<img> 等），提供后优先级最高，不使用默认模板" },
+                "html_body": { "type": "string", "description": "可选：AI Agent 自带完整 HTML 正文（可含 <table class=\"mail-table\">/<img> 等），提供后优先级最高，不使用默认模板；宽表会被自动包进横向滚动容器，窄屏出现左右滚动条，请勿自行加 overflow 包裹" },
                 "brand": { "type": "string", "description": "可选：页眉品牌名（默认 Multica MCP），默认模板使用" },
                 "greeting": { "type": "string", "description": "可选：问候语（默认“您好：”，空串不显示问候行），默认模板使用" },
                 "sign_name": { "type": "string", "description": "可选：落款人名（默认沿用品牌名，空串不显示签名区），默认模板使用" },

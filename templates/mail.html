@@ -70,12 +70,15 @@
     .outer { width:100% !important; }
     .pad { padding-left:18px !important; padding-right:18px !important; }
     .titlex { font-size:26px !important; }
-    table.mail-table, table.mail-table tbody, table.mail-table tr, table.mail-table td { width:100% !important; }
   }
   .mail-block { margin:0 0 20px 0; }
+  /* 布局表格用固定布局：避免窄屏下内容把外层表格链撑宽，使滚动被约束在 wrap 内部 */
+  table:not(.mail-table):not(.mail-cols) { table-layout:fixed; }
   .mail-h2 { font-family:Georgia,'Noto Serif SC','Songti SC','STSong',serif; font-size:19px; color:#1f3a5f; font-weight:600; margin:28px 0 12px 0; letter-spacing:1px; }
   .mail-p  { margin:0 0 14px 0; font-family:'Helvetica Neue',Helvetica,Arial,'Microsoft YaHei',sans-serif; font-size:15px; line-height:1.9; color:#3a4556; }
   .mail-small { font-size:13px; color:#8792a3; }
+  .mail-table-wrap { width:100%; overflow-x:auto; -webkit-overflow-scrolling:touch; margin:14px 0 22px 0; }
+  .mail-table-wrap table.mail-table { width:auto !important; min-width:100% !important; margin:0 !important; }
   table.mail-table { width:100%; border-collapse:collapse; margin:14px 0 22px 0; font-family:'Helvetica Neue',Helvetica,Arial,'Microsoft YaHei',sans-serif; border:1px solid #dde3ec; border-radius:8px; overflow:hidden; }
   table.mail-table th { background-color:#1f3a5f; color:#ffffff; font-size:13px; font-weight:600; text-align:left; padding:11px 14px; }
   table.mail-table td { font-size:13px; color:#3a4556; padding:11px 14px; border-bottom:1px solid #eef1f6; }

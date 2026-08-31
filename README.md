@@ -136,6 +136,8 @@ TLS 请在 443 server 块配置证书后复用同一段 location。
 - `body` 纯文本按空行分段转成 HTML 段落，HTML 全部转义防注入；`subject` 作标题、`brand` 作品牌（页眉/印章）、`sign_name` 作落款
 - **提供 `html_body`** 时（AI Agent 自带模板），优先使用它，其余参数忽略
 - 支持正文区块：`<p class="mail-p">` 段落、`<table class="mail-table">` 表格、`<img class="mail-img">` 图片、`.mail-callout` 高亮、`.mail-quote` 引用、`.mail-list` 列表、`<a class="mail-btn">` 按钮
+- **宽表自动横向滚动**：`html_body` 中的 `<table class="mail-table">` 会被自动包进 `.mail-table-wrap` 滚动容器——窄屏（手机）下表格保持可读最小宽度，超宽时容器内置左右滚动条，可左右滑动查看，而非被压缩导致列内容截断。若 AI 已自行使用 `mail-table-wrap` 则不重复包裹
+- **排版随页面宽度自适应**：桌面端 640px 居中卡片，`≤620px` 视口自动切换为全宽 + 收窄内边距（`.pad` 18px）+ 标题缩小（`.titlex` 26px），正文区块与图片均 `max-width:100%`
 
 返回值示例（成功）：
 

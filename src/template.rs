@@ -1,6 +1,8 @@
 //! 默认邮件 HTML 模板渲染。
 //! - AI Agent 未提供自定义 `html_body` 时，用此模板渲染邮件正文；
-//! - 模板为桌面/移动端响应式，支持文本 / 表格 / 图片 / 引用 / 列表 / 按钮等区块（class 见模板）。
+//! - 模板为桌面/移动端响应式，支持文本 / 表格 / 图片 / 引用 / 列表 / 按钮等区块（class 见模板）；
+//! - `html_body` 中的 `<table class="mail-table">` 会被自动包进横向滚动容器
+//!   （`.mail-table-wrap`），宽表在窄屏自动出现左右滚动条而非被压缩。
 
 pub const DEFAULT_BRAND: &str = "Multica MCP";
 
@@ -52,6 +54,8 @@ pub fn render(opts: &RenderOptions) -> String {
         None => (plain_to_html(&opts.body), opts.body.clone()),
     };
     let preheader = make_preheader(&raw_for_preheader);
+    // 把正文中的 .mail-table 自动包进横向滚动容器，宽表在窄屏自动出现左右滚动条
+    let body_html = wrap_wide_tables(&body_html);
 
     let now = time::OffsetDateTime::now_utc();
     let date = format!(
@@ -127,6 +131,116 @@ pub fn plain_to_html(text: &str) -> String {
         out.push_str(&format!("<p class=\"mail-p\">{}</p>\n", inner));
     }
     out
+}
+
+/// 将正文中的 `<table class="mail-table">` 自动包进 `.mail-table-wrap` 滚动容器。
+///
+/// 目的：窄屏时宽表保持可读最小宽度，超出容器部分由 `overflow-x:auto` 提供左右滚动条，
+/// 而不是被 CSS 压缩导致列内容溢出/截断。若正文已自行使用 `mail-table-wrap` 则跳过，
+/// 避免双重包裹。
+fn wrap_wide_tables(html: &str) -> String {
+    const WRAP_OPEN: &str = "<div class=\"mail-table-wrap\">";
+    const WRAP_CLOSE: &str = "</div>";
+
+    if !html.contains("mail-table") || html.contains("mail-table-wrap") {
+        return html.to_string();
+    }
+
+    let mut out = String::with_capacity(html.len() + 128);
+    let mut rest = html;
+    loop {
+        let Some(tag_start) = rest.find("<table") else {
+            out.push_str(rest);
+            break;
+        };
+        // 仅处理 class 含 mail-table 的表格开标签（`<table ...>`，含属性）
+        let Some(tag_end_rel) = find_open_tag_end(&rest[tag_start..]) else {
+            out.push_str(rest);
+            break;
+        };
+        let tag = &rest[tag_start..tag_start + tag_end_rel];
+        if !tag_has_mail_table_class(tag) {
+            // 非目标表格：保留到当前 tag 后，继续向后扫描
+            out.push_str(&rest[..tag_start + tag_end_rel]);
+            rest = &rest[tag_start + tag_end_rel..];
+            continue;
+        }
+        // 从开标签之后找配对的 </table>（按嵌套深度匹配）
+        let content_start_rel = tag_end_rel;
+        let Some(close_rel) = find_table_close(&rest[tag_start + content_start_rel..]) else {
+            out.push_str(rest);
+            break;
+        };
+        let close_start = tag_start + content_start_rel + close_rel;
+        out.push_str(&rest[..tag_start]);
+        out.push_str(WRAP_OPEN);
+        out.push_str(&rest[tag_start..close_start + "</table>".len()]);
+        out.push_str(WRAP_CLOSE);
+        rest = &rest[close_start + "</table>".len()..];
+    }
+    out
+}
+
+/// 返回开标签 `...>`（含 >）的相对长度；属性值内可能含 `>`（如 data URI），需解析引号
+fn find_open_tag_end(s: &str) -> Option<usize> {
+    let bytes = s.as_bytes();
+    let mut i = 0usize;
+    let mut quote: Option<u8> = None;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'"' | b'\'' if quote == Some(bytes[i]) => quote = None,
+            b'"' | b'\'' if quote.is_none() => quote = Some(bytes[i]),
+            b'>' if quote.is_none() => return Some(i + 1),
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+fn tag_has_mail_table_class(tag: &str) -> bool {
+    // `<table` 之后到 `>` 之间的属性串
+    let attr = tag.get(6..).unwrap_or("");
+    let lower = attr.to_ascii_lowercase().replace('=', " ");
+    lower
+        .split(|c: char| c.is_whitespace() || c == '"' || c == '\'')
+        .any(|tok| tok == "mail-table")
+}
+
+/// 从目标表格**开标签之后**开始扫描，按嵌套深度找匹配的 `</table>`（返回相对扫描起点的偏移）
+fn find_table_close(s: &str) -> Option<usize> {
+    let bytes = s.as_bytes();
+    let mut depth = 1usize;
+    let mut i = 0usize;
+    while i < bytes.len() {
+        if bytes[i..].starts_with(b"<table") && is_tag_boundary(s, i, false) {
+            if let Some(end) = find_open_tag_end(&s[i..]) {
+                depth += 1;
+                i += end;
+                continue;
+            }
+        }
+        if bytes[i..].starts_with(b"</table") && is_tag_boundary(s, i, true) {
+            depth -= 1;
+            if depth == 0 {
+                return Some(i);
+            }
+            i += "</table>".len();
+            continue;
+        }
+        i += 1;
+    }
+    None
+}
+
+fn is_tag_boundary(s: &str, i: usize, is_close: bool) -> bool {
+    let after = s
+        .as_bytes()
+        .get(i + if is_close { "</table".len() } else { "<table".len() });
+    match after {
+        None => true,
+        Some(b) => *b == b'>' || b.is_ascii_whitespace(),
+    }
 }
 
 fn escape_html(s: &str) -> String {
@@ -244,5 +358,73 @@ mod tests {
         assert!(!r.contains("<script>alert"), "注入应被转义");
         assert!(r.contains("&lt;script&gt;"));
         assert!(!r.contains("<img src=x onerror"), "img 注入应被转义");
+    }
+
+    #[test]
+    fn mail_table_auto_wrapped_in_scroll_container() {
+        let body = "<p class=\"mail-p\">数据如下：</p>\n<table class=\"mail-table\"><tr><th>A</th><th>B</th></tr><tr><td>1</td><td>2</td></tr></table>";
+        let wrapped = wrap_wide_tables(body);
+        assert!(wrapped.contains("<div class=\"mail-table-wrap\">"));
+        assert!(wrapped.contains("</table></div>"), "{}", wrapped);
+        // 包裹只应在表格两端各出现一次（开容器一次 + 对应闭合 </div>）
+        assert_eq!(
+            wrapped.match_indices("mail-table-wrap").count(),
+            1,
+            "开容器出现一次: {}",
+            wrapped
+        );
+        assert!(wrapped.contains("</table></div>"), "闭合容器: {}", wrapped);
+        // 表格之外的内容原样保留
+        assert!(wrapped.starts_with("<p class=\"mail-p\">"));
+    }
+
+    #[test]
+    fn non_mail_table_left_untouched() {
+        let body = "<table role=\"presentation\"><tr><td>x</td></tr></table>";
+        assert_eq!(wrap_wide_tables(body), body);
+    }
+
+    #[test]
+    fn already_wrapped_tables_not_double_wrapped() {
+        let body = "<div class=\"mail-table-wrap\"><table class=\"mail-table\"><tr><td>1</td></tr></table></div>";
+        assert_eq!(wrap_wide_tables(body), body);
+    }
+
+    #[test]
+    fn table_with_class_attribute_middle_still_wrapped() {
+        let body = "<table width=\"600\" class=\"mail-table\" cellspacing=\"0\"><tr><td>1</td></tr></table>";
+        let wrapped = wrap_wide_tables(body);
+        assert!(wrapped.starts_with("<div class=\"mail-table-wrap\"><table width=\"600\" class=\"mail-table\""), "{}", wrapped);
+    }
+
+    #[test]
+    fn nested_table_matched_to_own_close() {
+        // 外层 mail-table 内嵌一个普通表格：应匹配到外层的 </table>
+        let body = "<table class=\"mail-table\"><tr><td><table><tr><td>in</td></tr></table></td></tr></table>";
+        let wrapped = wrap_wide_tables(body);
+        assert!(wrapped.starts_with("<div class=\"mail-table-wrap\">"));
+        assert!(wrapped.ends_with("</table></div>"), "{}", wrapped);
+        assert!(!wrapped[13..].contains("mail-table-wrap"), "只有最外层被包: {}", wrapped);
+    }
+
+    #[test]
+    fn attribute_value_with_gt_parsed_correctly() {
+        // 属性值（data URI）内含 >，不应截断开标签
+        let body = "<table class=\"mail-table\" style=\"background:url(data:image/svg+xml;base64,PHN2Zz4=)\"><tr><td>1</td></tr></table>";
+        let wrapped = wrap_wide_tables(body);
+        assert!(wrapped.starts_with("<div class=\"mail-table-wrap\"><table class=\"mail-table\""), "{}", wrapped);
+        assert!(wrapped.ends_with("</table></div>"), "{}", wrapped);
+    }
+
+    #[test]
+    fn render_wraps_mail_table_in_html_body() {
+        let r = render(&RenderOptions {
+            subject: "S".into(),
+            body: "plain".into(),
+            html_body: Some("<table class=\"mail-table\"><tr><th>A</th><th>B</th></tr></table>".into()),
+            ..Default::default()
+        });
+        assert!(r.contains("mail-table-wrap"), "渲染时应自动包裹滚动容器");
+        assert!(r.contains("overflow-x:auto"), "滚动容器应有 overflow-x:auto");
     }
 }
