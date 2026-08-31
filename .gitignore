@@ -2,3 +2,4 @@
 config.toml
 *.pem
 *.key
+!.cargo/config.toml
