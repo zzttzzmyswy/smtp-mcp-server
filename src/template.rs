@@ -121,18 +121,91 @@ pub fn render(opts: &RenderOptions) -> String {
         .replace("{{FOOTER}}", footer)
 }
 
-/// 纯文本正文 → 模板正文片段：按空行分段，段内换行转 <br>，全部转义防注入
+/// 纯文本正文 → 模板正文片段：按空行分段，段内换行转 <br>，全部转义防注入；
+/// 连续 `|` 行组成的 Markdown 表格会转成真 HTML 表格（内联样式，兼容剥除 style 的客户端）。
 pub fn plain_to_html(text: &str) -> String {
     let mut out = String::new();
     for para in text.split("\n\n") {
-        let para_trimmed = para.trim();
-        if para_trimmed.is_empty() {
-            continue;
+        let lines: Vec<&str> = para.lines().map(str::trim).collect();
+        if lines.iter().any(|l| !l.is_empty() && l.starts_with('|'))
+            && lines.iter().filter(|l| l.starts_with('|')).count() >= 3
+        {
+            if let Some(tbl) = markdown_table_to_html(&lines) {
+                out.push_str(&tbl);
+                continue;
+            }
         }
-        let inner = escape_html(para_trimmed).replace('\n', "<br>");
-        out.push_str(&format!("<p class=\"mail-p\">{}</p>\n", inner));
+        let inner = escape_html_rows(&lines);
+        out.push_str(&format!(
+            "<p class=\"mail-p\" style=\"margin:0 0 14px 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;font-size:17px;line-height:1.9;color:#3a4556;\">{}</p>\n",
+            inner
+        ));
     }
     out
+}
+
+/// 逐行转义后以 <br> 连接（避免转义破坏 <br> 分隔符）
+fn escape_html_rows(lines: &[&str]) -> String {
+    lines
+        .iter()
+        .map(|l| escape_html(l))
+        .collect::<Vec<_>>()
+        .join("<br>")
+}
+
+fn tables_cells<'a>(row: &'a str) -> Vec<&'a str> {
+    let parts: Vec<&str> = row.split('|').collect();
+    parts
+        .iter()
+        .skip(1)
+        .take(parts.len().saturating_sub(2))
+        .map(|s| s.trim())
+        .collect()
+}
+
+/// 将连续 `|` 行（Markdown 管道表：表头行 + 分隔行 + 数据行）渲染为内联样式的 HTML 表格
+fn markdown_table_to_html(lines: &[&str]) -> Option<String> {
+    let tbl_lines: Vec<&str> = lines.iter().filter(|l| l.starts_with('|')).copied().collect();
+    if tbl_lines.len() < 3 {
+        return None;
+    }
+    // 分隔行（形如 |---|:---:|---|）应位于第二行；否则视为普通文本
+    let sep = tbl_lines[1].replace(' ', "");
+    let is_sep = sep.starts_with('|')
+        && sep.ends_with('|')
+        && sep
+            .chars()
+            .filter(|c| *c != '|')
+            .all(|c| c == '-' || c == ':' || c == ' ');
+    if !is_sep {
+        return None;
+    }
+
+    let mut out = String::from(
+        "<div class=\"mail-table-wrap\" style=\"width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;margin:14px 0 22px 0;\">",
+    );
+    out.push_str(
+        "<table class=\"mail-table\" style=\"width:100%;border-collapse:collapse;border:1px solid #dde3ec;\"><tr>",
+    );
+    for h in tables_cells(tbl_lines[0]).iter().filter(|c| !c.is_empty()) {
+        out.push_str(&format!(
+            "<th style=\"background-color:#1f3a5f;color:#ffffff;font-size:15px;font-weight:600;text-align:left;padding:12px 14px;\">{}</th>",
+            escape_html(h)
+        ));
+    }
+    out.push_str("</tr>");
+    for row in &tbl_lines[2..] {
+        out.push_str("<tr>");
+        for c in tables_cells(row).iter().filter(|c| !c.is_empty()) {
+            out.push_str(&format!(
+                "<td style=\"font-size:15px;color:#3a4556;padding:12px 14px;border-bottom:1px solid #eef1f6;\">{}</td>",
+                escape_html(c)
+            ));
+        }
+        out.push_str("</tr>");
+    }
+    out.push_str("</table></div>");
+    Some(out)
 }
 
 /// 将正文中的 `<table class="mail-table">` 自动包进 `.mail-table-wrap` 滚动容器。
@@ -141,7 +214,7 @@ pub fn plain_to_html(text: &str) -> String {
 /// 而不是被 CSS 压缩导致列内容溢出/截断。若正文已自行使用 `mail-table-wrap` 则跳过，
 /// 避免双重包裹。
 fn wrap_wide_tables(html: &str) -> String {
-    const WRAP_OPEN: &str = "<div class=\"mail-table-wrap\">";
+    const WRAP_OPEN: &str = "<div class=\"mail-table-wrap\" style=\"width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;margin:14px 0 22px 0;\">";
     const WRAP_CLOSE: &str = "</div>";
 
     if !html.contains("mail-table") || html.contains("mail-table-wrap") {
@@ -176,11 +249,92 @@ fn wrap_wide_tables(html: &str) -> String {
         let close_start = tag_start + content_start_rel + close_rel;
         out.push_str(&rest[..tag_start]);
         out.push_str(WRAP_OPEN);
-        out.push_str(&rest[tag_start..close_start + "</table>".len()]);
+        out.push_str(&inline_table_styles(&rest[tag_start..close_start + "</table>".len()]));
         out.push_str(WRAP_CLOSE);
         rest = &rest[close_start + "</table>".len()..];
     }
     out
+}
+
+/// 给 `<table class="mail-table">` 内部注入内联样式（th/td 字号、边框、底色），
+/// 保证剥除 <style> 的邮件客户端仍正常显示表格结构与排版。
+fn inline_table_styles(block: &str) -> String {
+    let mut out = inject_all(block.to_string(), "<table", "style", TD_TABLE);
+    out = inject_all(out, "<th", "style", TH_STYLE);
+    inject_all(out, "<td", "style", TD_STYLE)
+}
+
+const TD_TABLE: &str = "width:100%;border-collapse:collapse;border:1px solid #dde3ec;";
+const TH_STYLE: &str = "background-color:#1f3a5f;color:#ffffff;font-size:15px;font-weight:600;text-align:left;padding:12px 14px;";
+const TD_STYLE: &str = "font-size:15px;color:#3a4556;padding:12px 14px;border-bottom:1px solid #eef1f6;";
+
+/// 在 html 中所有 `<tag` 开标签上补写 style（按分号键去重）
+fn inject_all(html: String, tag: &str, attr: &str, value: &str) -> String {
+    let mut out = String::with_capacity(html.len() + 256);
+    let mut rest = html.as_str();
+    loop {
+        let Some(pos) = rest.find(tag) else {
+            out.push_str(rest);
+            break;
+        };
+        out.push_str(&rest[..pos + tag.len()]);
+        rest = &rest[pos + tag.len()..];
+        // 找到该开标签的 > （引号感知）
+        let Some(gt_rel) = find_open_tag_end(rest) else {
+            out.push_str(rest);
+            break;
+        };
+        out.push_str(&inject_tag_attr(&rest[..gt_rel], attr, value));
+        rest = &rest[gt_rel..];
+    }
+    out
+}
+
+/// 在单个开标签（含 `>`）上注入 attr 值，按分号键去重
+fn inject_tag_attr(tag_body: &str, attr: &str, value: &str) -> String {
+    let lower = tag_body.to_ascii_lowercase();
+    let pat = format!("{}=", attr);
+    match lower.find(&pat) {
+        None => {
+            // 无该属性：在 `>` 前插入
+            if let Some(gt) = tag_body.rfind('>') {
+                format!("{} {}=\"{}\"{}", &tag_body[..gt], attr, value, &tag_body[gt..])
+            } else {
+                format!("{} {}=\"{}\"{}", tag_body, attr, value, ">")
+            }
+        }
+        Some(p) => {
+            // 已有该属性：取出引号内的值，合并缺失的分号键
+            let eq_end = p + pat.len();
+            let after = &tag_body[eq_end..];
+            let (open_q, content_start) = match after.as_bytes().first() {
+                Some(b'"') => ('"', 1usize),
+                Some(b'\'') => ('\'', 1usize),
+                _ => ('"', 0usize),
+            };
+            let content = &after[content_start.min(after.len())..];
+            let content_end = content.find(open_q).unwrap_or(content.len());
+            let existing = &content[..content_end];
+            let existing_keys: Vec<&str> = existing
+                .split(';')
+                .filter_map(|kv| kv.split(':').next().map(str::trim))
+                .collect();
+            let mut to_add = String::new();
+            for kv in value.split(';') {
+                let key = kv.split(':').next().unwrap_or("").trim();
+                if !existing_keys.contains(&key) && !key.is_empty() {
+                    to_add.push(';');
+                    to_add.push_str(kv);
+                }
+            }
+            if to_add.is_empty() {
+                return tag_body.to_string();
+            }
+            // 在 attr 值闭引号内部末尾追加（content_end 之前）
+            let abs_end = eq_end + content_start + content_end;
+            format!("{}{}{}", &tag_body[..abs_end], to_add, &tag_body[abs_end..])
+        }
+    }
 }
 
 /// 返回开标签 `...>`（含 >）的相对长度；属性值内可能含 `>`（如 data URI），需解析引号
@@ -285,12 +439,40 @@ mod tests {
     #[test]
     fn plain_body_is_wrapped_and_escaped() {
         let html = plain_to_html("第一行\n第二行\n\n<b>危险</b> & <script>");
-        assert!(html.contains("<p class=\"mail-p\">第一行<br>第二行</p>"));
+        assert!(html.contains("第一行<br>第二行"));
+        assert!(html.contains("font-size:17px"), "段落应内联字号: {}", html);
         assert!(
             html.contains("&lt;b&gt;危险&lt;/b&gt; &amp; &lt;script&gt;"),
             "{}",
             html
         );
+    }
+
+    #[test]
+    fn markdown_table_converted_to_inline_html_table() {
+        let md = "| 指标 | 本周 | 上周 |\n|---|---|---|\n| A | 1 | 2 |\n| B | 3 | 4 |";
+        let html = plain_to_html(md);
+        assert!(html.contains("<table class=\"mail-table\""), "{}", html);
+        assert!(html.contains("border-collapse:collapse"), "表格应内联样式: {}", html);
+        assert!(html.contains("<th style=\""), "表头应内联样式: {}", html);
+        assert!(html.contains("<td style=\""), "单元格应内联样式: {}", html);
+        // 表头与数据都出现，且分隔行不渲染
+        assert!(html.contains(">指标<") && html.contains(">A<") && html.contains(">4<"));
+        assert!(html.contains("mail-table-wrap"), "应包滚动容器: {}", html);
+    }
+
+    #[test]
+    fn inline_table_styles_injected_into_ai_html() {
+        let ai = "<table class=\"mail-table\"><tr><th>A</th><td>1</td></tr></table>";
+        let wrapped = wrap_wide_tables(ai);
+        assert!(wrapped.contains("border-collapse:collapse"), "{}", wrapped);
+        assert!(wrapped.contains("<th style=\""), "th 应内联: {}", wrapped);
+        assert!(wrapped.contains("<td style=\""), "td 应内联: {}", wrapped);
+        // 已有的 style 键不应被重复添加
+        let ai2 = "<table class=\"mail-table\"><tr><td style=\"color:#ff0000\">1</td></tr></table>";
+        let w2 = wrap_wide_tables(ai2);
+        assert!(w2.contains("color:#ff0000"), "已有 style 应保留: {}", w2);
+        assert_eq!(w2.matches("color:#ff0000").count(), 1, "不应重复注入: {}", w2);
     }
 
     #[test]
@@ -366,9 +548,10 @@ mod tests {
     fn mail_table_auto_wrapped_in_scroll_container() {
         let body = "<p class=\"mail-p\">数据如下：</p>\n<table class=\"mail-table\"><tr><th>A</th><th>B</th></tr><tr><td>1</td><td>2</td></tr></table>";
         let wrapped = wrap_wide_tables(body);
-        assert!(wrapped.contains("<div class=\"mail-table-wrap\">"));
+        assert!(wrapped.contains("class=\"mail-table-wrap\""));
+        assert!(wrapped.contains("overflow-x:auto"), "{}", wrapped);
         assert!(wrapped.contains("</table></div>"), "{}", wrapped);
-        // 包裹只应在表格两端各出现一次（开容器一次 + 对应闭合 </div>）
+        // 包裹只应出现一次（开容器一次 + 对应闭合 </div>）
         assert_eq!(
             wrapped.match_indices("mail-table-wrap").count(),
             1,
@@ -396,7 +579,9 @@ mod tests {
     fn table_with_class_attribute_middle_still_wrapped() {
         let body = "<table width=\"600\" class=\"mail-table\" cellspacing=\"0\"><tr><td>1</td></tr></table>";
         let wrapped = wrap_wide_tables(body);
-        assert!(wrapped.starts_with("<div class=\"mail-table-wrap\"><table width=\"600\" class=\"mail-table\""), "{}", wrapped);
+        assert!(wrapped.starts_with("<div class=\"mail-table-wrap\" style=\""), "{}", wrapped);
+        assert!(wrapped.contains("border-collapse:collapse"), "table 应内联样式: {}", wrapped);
+        assert!(wrapped.contains("<td style=\"font-size:15px;"), "td 应内联字号: {}", wrapped);
     }
 
     #[test]
@@ -404,9 +589,9 @@ mod tests {
         // 外层 mail-table 内嵌一个普通表格：应匹配到外层的 </table>
         let body = "<table class=\"mail-table\"><tr><td><table><tr><td>in</td></tr></table></td></tr></table>";
         let wrapped = wrap_wide_tables(body);
-        assert!(wrapped.starts_with("<div class=\"mail-table-wrap\">"));
+        assert!(wrapped.starts_with("<div class=\"mail-table-wrap\" style=\""), "{}", wrapped);
         assert!(wrapped.ends_with("</table></div>"), "{}", wrapped);
-        assert!(!wrapped[13..].contains("mail-table-wrap"), "只有最外层被包: {}", wrapped);
+        assert!(!wrapped[20..].contains("mail-table-wrap"), "只有最外层被包: {}", wrapped);
     }
 
     #[test]
@@ -414,8 +599,9 @@ mod tests {
         // 属性值（data URI）内含 >，不应截断开标签
         let body = "<table class=\"mail-table\" style=\"background:url(data:image/svg+xml;base64,PHN2Zz4=)\"><tr><td>1</td></tr></table>";
         let wrapped = wrap_wide_tables(body);
-        assert!(wrapped.starts_with("<div class=\"mail-table-wrap\"><table class=\"mail-table\""), "{}", wrapped);
+        assert!(wrapped.starts_with("<div class=\"mail-table-wrap\" style=\""), "{}", wrapped);
         assert!(wrapped.ends_with("</table></div>"), "{}", wrapped);
+        assert!(wrapped.contains("data:image/svg+xml;base64") || wrapped.contains("PHN2Zz4"), "data URI 应保留: {}", wrapped);
     }
 
     #[test]
