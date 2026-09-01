@@ -185,7 +185,7 @@ fn markdown_table_to_html(lines: &[&str]) -> Option<String> {
         "<div class=\"mail-table-wrap\" style=\"width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;margin:14px 0 22px 0;\">",
     );
     out.push_str(
-        "<table class=\"mail-table\" style=\"width:100%;border-collapse:collapse;border:1px solid #dde3ec;\"><tr>",
+        "<table class=\"mail-table\" style=\"width:auto;min-width:100%;border-collapse:collapse;border:1px solid #dde3ec;\"><tr>",
     );
     for h in tables_cells(tbl_lines[0]).iter().filter(|c| !c.is_empty()) {
         out.push_str(&format!(
@@ -264,7 +264,7 @@ fn inline_table_styles(block: &str) -> String {
     inject_all(out, "<td", "style", TD_STYLE)
 }
 
-const TD_TABLE: &str = "width:100%;border-collapse:collapse;border:1px solid #dde3ec;";
+const TD_TABLE: &str = "width:auto;min-width:100%;border-collapse:collapse;border:1px solid #dde3ec;";
 const TH_STYLE: &str = "background-color:#1f3a5f;color:#ffffff;font-size:15px;font-weight:600;text-align:left;padding:12px 14px;";
 const TD_STYLE: &str = "font-size:15px;color:#3a4556;padding:12px 14px;border-bottom:1px solid #eef1f6;";
 
