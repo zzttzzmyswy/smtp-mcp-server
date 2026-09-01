@@ -67,12 +67,12 @@ pub fn render(opts: &RenderOptions) -> String {
         now.day()
     );
 
-    let kicker_cell = "<div style=\"margin-top:26px;font-family:Georgia,'Noto Serif CJK SC','Source Han Serif SC','Songti SC','STSong',serif;font-size:14px;color:#c9a35c;letter-spacing:4px;\">NOTIFICATION · 通知</div>".to_string();
+    let kicker_cell = "<div style=\"margin-top:26px;font-family:Georgia,'Noto Serif CJK SC','Source Han Serif SC','Songti SC','STSong',serif;font-size:15px;color:#c9a35c;letter-spacing:4px;\">NOTIFICATION · 通知</div>".to_string();
     let greeting_cell = if greeting.is_empty() {
         String::new()
     } else {
         format!(
-            "<p style=\"margin:0 0 18px 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;font-size:15px;line-height:1.9;color:#3a4556;\">{}</p>",
+            "<p style=\"margin:0 0 18px 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;font-size:16px;line-height:1.9;color:#3a4556;\">{}</p>",
             escape_html(greeting)
         )
     };
@@ -92,11 +92,11 @@ pub fn render(opts: &RenderOptions) -> String {
                     "<table role=\"presentation\" cellspacing=\"0\" cellpadding=\"0\" border=\"0\"><tr>",
                     "<td valign=\"middle\" style=\"padding-right:14px;\">",
                     "<table role=\"presentation\" width=\"40\" height=\"40\" cellspacing=\"0\" cellpadding=\"0\" border=\"0\" style=\"background-color:#eef1f6;border-radius:50%;\">",
-                    "<tr><td align=\"center\" valign=\"middle\" style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;font-size:15px;font-weight:700;color:#1f3a5f;\">{}</td></tr></table></td>",
-                    "<td valign=\"middle\"><div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;font-size:15px;font-weight:600;color:#1f3a5f;\">{}</div>",
-                    "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;font-size:12px;color:#8792a3;margin-top:2px;\">{}</div></td>",
+                    "<tr><td align=\"center\" valign=\"middle\" style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;font-size:16px;font-weight:700;color:#1f3a5f;\">{}</td></tr></table></td>",
+                    "<td valign=\"middle\"><div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;font-size:16px;font-weight:600;color:#1f3a5f;\">{}</div>",
+                    "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;font-size:14px;color:#8792a3;margin-top:2px;\">{}</div></td>",
                     "<td valign=\"middle\" align=\"right\" style=\"padding-left:24px;\">",
-                    "<span style=\"border:2px solid #c0392b;border-radius:3px;padding:3px 8px;font-family:KaiTi,'STKaiti','Kaiti SC',serif;font-size:13px;color:#c0392b;letter-spacing:3px;\">已阅</span>",
+                    "<span style=\"border:2px solid #c0392b;border-radius:3px;padding:4px 9px;font-family:KaiTi,'STKaiti','Kaiti SC',serif;font-size:14px;color:#c0392b;letter-spacing:3px;\">已阅</span>",
                     "</td></tr></table></td></tr></table>"
                 ),
                 initial,
