@@ -138,6 +138,7 @@ TLS 请在 443 server 块配置证书后复用同一段 location。
 - 支持正文区块：`<p class="mail-p">` 段落、`<table class="mail-table">` 表格、`<img class="mail-img">` 图片、`.mail-callout` 高亮、`.mail-quote` 引用、`.mail-list` 列表、`<a class="mail-btn">` 按钮
 - **宽表自动横向滚动**：`html_body` 中的 `<table class="mail-table">` 会被自动包进 `.mail-table-wrap` 滚动容器——窄屏（手机）下表格保持可读最小宽度，超宽时容器内置左右滚动条，可左右滑动查看，而非被压缩导致列内容截断。若 AI 已自行使用 `mail-table-wrap` 则不重复包裹
 - **排版随页面宽度自适应**：桌面端 640px 居中卡片，`≤620px` 视口自动切换为全宽 + 收窄内边距（`.pad` 18px）+ 标题缩小（`.titlex` 26px），正文区块与图片均 `max-width:100%`
+- **字体跟随设备默认**：正文（段落/表格/列表/引用/按钮等）采用系统字体栈 `-apple-system`/`BlinkMacSystemFont`/`Segoe UI`/`Roboto`/苹方/微软雅黑，各设备优先使用自己的默认 UI 字体（iOS→苹方、Android→Roboto、Windows→雅黑），而非固定某套字体；仅品牌装饰元素（大标题衬线、朱红印章楷体）保留设计字体并带跨平台中文回退
 
 返回值示例（成功）：
 
