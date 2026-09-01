@@ -66,6 +66,11 @@
 
 <!-- 正文内容区块：文本 / 表格 / 图片 / 引用 / 列表 / 按钮 / 两栏 / 印章 -->
 <style>
+  /* 不阻断邮件客户端/系统字号缩放：允许按用户设置自动放大（默认 auto） */
+  body, .outer, .pad, .mail-p, .mail-h2, .mail-quote, .mail-callout, .mail-list, a.mail-btn, table.mail-table, table.mail-table th, table.mail-table td {
+    -webkit-text-size-adjust:auto;
+    text-size-adjust:auto;
+  }
   @media only screen and (max-width:620px) {
     .outer { width:100% !important; }
     .pad { padding-left:18px !important; padding-right:18px !important; }
