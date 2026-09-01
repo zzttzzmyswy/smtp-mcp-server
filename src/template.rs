@@ -181,15 +181,20 @@ fn markdown_table_to_html(lines: &[&str]) -> Option<String> {
         return None;
     }
 
+    let cols = tables_cells(tbl_lines[0]).iter().filter(|c| !c.is_empty()).count();
+    let table_style = if cols >= 6 {
+        format!("width:auto;min-width:{}px;border-collapse:collapse;border:1px solid #dde3ec;", cols * 96)
+    } else {
+        "width:auto;min-width:100%;border-collapse:collapse;border:1px solid #dde3ec;".to_string()
+    };
+
     let mut out = String::from(
         "<div class=\"mail-table-wrap\" style=\"width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;margin:14px 0 22px 0;\">",
     );
-    out.push_str(
-        "<table class=\"mail-table\" style=\"width:auto;min-width:100%;border-collapse:collapse;border:1px solid #dde3ec;\"><tr>",
-    );
+    out.push_str(&format!("<table class=\"mail-table\" style=\"{}\"><tr>", table_style));
     for h in tables_cells(tbl_lines[0]).iter().filter(|c| !c.is_empty()) {
         out.push_str(&format!(
-            "<th style=\"background-color:#1f3a5f;color:#ffffff;font-size:15px;font-weight:600;text-align:left;padding:12px 14px;\">{}</th>",
+            "<th style=\"background-color:#1f3a5f;color:#ffffff;font-size:15px;font-weight:600;text-align:left;padding:12px 14px;min-width:96px;\">{}</th>",
             escape_html(h)
         ));
     }
@@ -198,7 +203,7 @@ fn markdown_table_to_html(lines: &[&str]) -> Option<String> {
         out.push_str("<tr>");
         for c in tables_cells(row).iter().filter(|c| !c.is_empty()) {
             out.push_str(&format!(
-                "<td style=\"font-size:15px;color:#3a4556;padding:12px 14px;border-bottom:1px solid #eef1f6;\">{}</td>",
+                "<td style=\"font-size:15px;color:#3a4556;padding:12px 14px;border-bottom:1px solid #eef1f6;min-width:96px;\">{}</td>",
                 escape_html(c)
             ));
         }
@@ -256,17 +261,38 @@ fn wrap_wide_tables(html: &str) -> String {
     out
 }
 
-/// 给 `<table class="mail-table">` 内部注入内联样式（th/td 字号、边框、底色），
-/// 保证剥除 <style> 的邮件客户端仍正常显示表格结构与排版。
+/// 给 `<table class="mail-table">` 内部注入内联样式（th/td 字号、边框、底色）。
+/// 宽表（列数较多）用像素 min-width 锁住表格物理宽度，防止网易/QQ 等客户端
+/// 把宽表压缩到屏幕宽度导致竖排、字号缩小；窄表维持 min-width:100% 填满容器。
 fn inline_table_styles(block: &str) -> String {
-    let mut out = inject_all(block.to_string(), "<table", "style", TD_TABLE);
+    let cols = count_first_row_cells(block);
+    let table_style = if cols >= 6 {
+        // 宽表：min-width 取列数×96（与单元格 min-width 一致的像素下限），
+        // 使表格天然宽于手机容器，客户端只能横向拖动而非压缩
+        format!("width:auto;min-width:{}px;border-collapse:collapse;border:1px solid #dde3ec;", cols * 96)
+    } else {
+        TD_TABLE.to_string()
+    };
+    let mut out = inject_all(block.to_string(), "<table", "style", &table_style);
     out = inject_all(out, "<th", "style", TH_STYLE);
     inject_all(out, "<td", "style", TD_STYLE)
 }
 
+/// 统计首个 `<tr>` 内的单元格数（th+td），用于判断是否宽表
+fn count_first_row_cells(block: &str) -> usize {
+    let tr_start = match block.find("<tr") {
+        Some(i) => i,
+        None => return 0,
+    };
+    let rest = &block[tr_start + 3..];
+    let tr_end = rest.find("</tr").unwrap_or(rest.len());
+    let row = &rest[..tr_end];
+    row.matches("<th").count() + row.matches("<td").count()
+}
+
 const TD_TABLE: &str = "width:auto;min-width:100%;border-collapse:collapse;border:1px solid #dde3ec;";
-const TH_STYLE: &str = "background-color:#1f3a5f;color:#ffffff;font-size:15px;font-weight:600;text-align:left;padding:12px 14px;";
-const TD_STYLE: &str = "font-size:15px;color:#3a4556;padding:12px 14px;border-bottom:1px solid #eef1f6;";
+const TH_STYLE: &str = "background-color:#1f3a5f;color:#ffffff;font-size:15px;font-weight:600;text-align:left;padding:12px 14px;min-width:96px;";
+const TD_STYLE: &str = "font-size:15px;color:#3a4556;padding:12px 14px;border-bottom:1px solid #eef1f6;min-width:96px;";
 
 /// 在 html 中所有 `<tag` 开标签上补写 style（按分号键去重）
 fn inject_all(html: String, tag: &str, attr: &str, value: &str) -> String {
@@ -459,6 +485,35 @@ mod tests {
         // 表头与数据都出现，且分隔行不渲染
         assert!(html.contains(">指标<") && html.contains(">A<") && html.contains(">4<"));
         assert!(html.contains("mail-table-wrap"), "应包滚动容器: {}", html);
+    }
+
+    #[test]
+    fn markdown_wide_table_gets_pixel_min_width() {
+        // 6 列表应通过像素 min-width 保持物理宽度（防止窄屏被压缩竖排）
+        let md = "| a | b | c | d | e | f |\n|---|---|---|---|---|---|\n| 1 | 2 | 3 | 4 | 5 | 6 |";
+        let html = plain_to_html(md);
+        assert!(html.contains("min-width:576px"), "宽表应像素 min-width(6×96): {}", html);
+        assert!(html.contains("min-width:96px"), "单元格应有 min-width: {}", html);
+    }
+
+    #[test]
+    fn markdown_narrow_table_stays_full_width() {
+        let md = "| a | b |\n|---|---|\n| 1 | 2 |";
+        let html = plain_to_html(md);
+        assert!(html.contains("min-width:100%"), "窄表应填满容器: {}", html);
+    }
+
+    #[test]
+    fn wide_ai_table_gets_pixel_min_width() {
+        // AI 提供 10 列表：表格 min-width 应≥960px 保持物理宽度
+        let ai = "<table class=\"mail-table\"><tr>".to_owned()
+            + &(0..10).map(|i| format!("<th>h{}</th>", i)).collect::<Vec<_>>().join("")
+            + "</tr><tr>"
+            + &(0..10).map(|i| format!("<td>d{}</td>", i)).collect::<Vec<_>>().join("")
+            + "</tr></table>";
+        let wrapped = wrap_wide_tables(&ai);
+        assert!(wrapped.contains("min-width:960px"), "宽表应像素 min-width: {}", wrapped);
+        assert!(wrapped.contains("min-width:96px"), "th/td 应有像素 min-width: {}", wrapped);
     }
 
     #[test]
