@@ -67,7 +67,6 @@ pub fn render(opts: &RenderOptions) -> String {
         now.day()
     );
 
-    let kicker_cell = "<div style=\"margin-top:26px;font-family:Georgia,'Noto Serif CJK SC','Source Han Serif SC','Songti SC','STSong',serif;font-size:15px;color:#c9a35c;letter-spacing:4px;\">NOTIFICATION · 通知</div>".to_string();
     let greeting_cell = if greeting.is_empty() {
         String::new()
     } else {
@@ -76,7 +75,6 @@ pub fn render(opts: &RenderOptions) -> String {
             escape_html(greeting)
         )
     };
-    let seal_text = format!("{} 印", brand);
     let sign_cell = sign_name
         .map(|name| {
             let initial = name
@@ -87,16 +85,14 @@ pub fn render(opts: &RenderOptions) -> String {
             let role = "Multica · 自动通知";
             format!(
                 concat!(
-                    "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" border=\"0\" style=\"margin-top:34px;\">",
-                    "<tr><td style=\"border-top:1px solid #e6e9ef;padding:18px 0 6px 0;\">",
+                    "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" border=\"0\" style=\"margin-top:28px;\">",
+                    "<tr><td style=\"border-top:1px solid #e6e9ef;padding:16px 0 4px 0;\">",
                     "<table role=\"presentation\" cellspacing=\"0\" cellpadding=\"0\" border=\"0\"><tr>",
-                    "<td valign=\"middle\" style=\"padding-right:14px;\">",
-                    "<table role=\"presentation\" width=\"40\" height=\"40\" cellspacing=\"0\" cellpadding=\"0\" border=\"0\" style=\"background-color:#eef1f6;border-radius:50%;\">",
-                    "<tr><td align=\"center\" valign=\"middle\" style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;font-size:16px;font-weight:700;color:#1f3a5f;\">{}</td></tr></table></td>",
-                    "<td valign=\"middle\"><div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;font-size:16px;font-weight:600;color:#1f3a5f;\">{}</div>",
-                    "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;font-size:14px;color:#8792a3;margin-top:2px;\">{}</div></td>",
-                    "<td valign=\"middle\" align=\"right\" style=\"padding-left:24px;\">",
-                    "<span style=\"border:2px solid #c0392b;border-radius:3px;padding:4px 9px;font-family:KaiTi,'STKaiti','Kaiti SC',serif;font-size:14px;color:#c0392b;letter-spacing:3px;\">已阅</span>",
+                    "<td valign=\"middle\" style=\"padding-right:12px;\">",
+                    "<table role=\"presentation\" width=\"38\" height=\"38\" cellspacing=\"0\" cellpadding=\"0\" border=\"0\" style=\"background-color:#eef1f6;border-radius:50%;\">",
+                    "<tr><td align=\"center\" valign=\"middle\" style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;font-size:15px;font-weight:700;color:#1f3a5f;\">{}</td></tr></table></td>",
+                    "<td valign=\"middle\"><div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;font-size:15px;font-weight:600;color:#1f3a5f;\">{}</div>",
+                    "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;font-size:13px;color:#8792a3;margin-top:2px;\">{}</div></td>",
                     "</td></tr></table></td></tr></table>"
                 ),
                 initial,
@@ -112,9 +108,7 @@ pub fn render(opts: &RenderOptions) -> String {
         .replace("{{PREHEADER}}", &preheader)
         .replace("{{BRAND}}", escape_html(brand).as_str())
         .replace("{{DATE}}", &date)
-        .replace("{{KICKER_CELL}}", &kicker_cell)
         .replace("{{TITLE}}", escape_html(&opts.subject).as_str())
-        .replace("{{SEAL}}", escape_html(&seal_text).as_str())
         .replace("{{GREETING_CELL}}", &greeting_cell)
         .replace("{{BODY}}", &body_html)
         .replace("{{SIGN_CELL}}", &sign_cell)
@@ -552,9 +546,7 @@ mod tests {
         assert!(!r.contains("{{"), "不应残留模板占位符: {:?}", r);
         assert!(r.contains("测试主题 &lt;ok&gt;"));
         assert!(r.contains("Multica MCP"));
-        assert!(r.contains("NOTIFICATION"));
         assert!(r.contains("您好"));
-        assert!(r.contains("已阅"));
         assert!(r.contains("mail-p"));
         assert!(r.contains("<!-- 邮件预览文字 -->"));
     }
@@ -570,7 +562,6 @@ mod tests {
             ..Default::default()
         });
         assert!(r.contains(">Aurora<"));
-        assert!(r.contains("Aurora 印"));
         assert!(r.contains("尊敬的伙伴"));
         assert!(r.contains("张三"));
         assert!(r.contains("张"));
@@ -584,7 +575,7 @@ mod tests {
             sign_name: Some("".into()),
             ..Default::default()
         });
-        assert!(!r.contains("已阅"));
+        assert!(!r.contains("Multica · 自动通知"));
     }
 
     #[test]
