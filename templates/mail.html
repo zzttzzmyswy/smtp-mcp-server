@@ -10,19 +10,19 @@
 <!-- 邮件预览文字 -->
 <div style="display:none;max-height:0;overflow:hidden;mso-hide:all;">{{PREHEADER}}</div>
 <center>
-  <!-- 外框：桌面 640px，移动端全宽（media query 覆盖） -->
-  <table role="presentation" class="outer" width="640" cellspacing="0" cellpadding="0" border="0" align="center" style="width:640px;max-width:100%;background-color:#eef0f4;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;">
+  <!-- 外框：桌面 640px，移动端全宽（media query 覆盖）；table-layout:fixed 防止宽表把外层撑宽 -->
+  <table role="presentation" class="outer" width="640" cellspacing="0" cellpadding="0" border="0" align="center" style="width:640px;max-width:100%;table-layout:fixed;background-color:#eef0f4;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;">
     <!-- ===== 通栏深色页眉（藏青渐变 + 金色回纹双线） ===== -->
     <tr>
       <td bgcolor="#1f3a5f" style="background-image:linear-gradient(135deg,#1f3a5f 0%,#14304e 100%); padding:46px 40px 34px 40px;" class="pad">
-        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="table-layout:fixed;">
           <tr>
             <td align="left" style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;font-size:17px;font-weight:700;color:#ffffff;letter-spacing:2px;">{{BRAND}}</td>
             <td align="right" style="font-family:Georgia,'Times New Roman','Noto Serif CJK SC','Songti SC','STSong',serif;font-size:13px;color:#c9a35c;letter-spacing:1px;">{{DATE}}</td>
           </tr>
         </table>
         <!-- 金色回纹双线 -->
-        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin-top:22px;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin-top:22px;table-layout:fixed;">
           <tr>
             <td style="border-top:1px solid #c9a35c;border-bottom:1px solid #c9a35c;height:6px;font-size:0;line-height:0;">&nbsp;</td>
           </tr>
@@ -30,7 +30,7 @@
         {{KICKER_CELL}}
         <div style="margin-top:8px;font-family:Georgia,'Noto Serif CJK SC','Source Han Serif SC','Songti SC','STSong',serif;font-size:34px;line-height:1.4;color:#ffffff;font-weight:600;letter-spacing:1px;" class="titlex">{{TITLE}}</div>
         <!-- 印章（朱红方章 · 楷体白字） -->
-        <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin-top:18px;">
+        <table role="presentation" cellspacing="0" cellpadding="0" border="0" style="margin-top:18px;table-layout:fixed;">
           <tr>
             <td style="border:2px solid #c0392b;border-radius:4px;padding:6px 10px;font-family:KaiTi,'STKaiti','Kaiti SC',serif;font-size:16px;color:#c0392b;letter-spacing:3px;background-color:#ffffff;">{{SEAL}}</td>
           </tr>
@@ -40,7 +40,7 @@
     <!-- ===== 正文白卡片 ===== -->
     <tr>
       <td align="center" bgcolor="#ffffff" style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;padding:34px 40px 30px 40px;" class="pad">
-        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="table-layout:fixed;">
           <tr>
             <td align="left">
               {{GREETING_CELL}}
@@ -54,7 +54,7 @@
     <!-- ===== 通栏深色页脚 ===== -->
     <tr>
       <td bgcolor="#14304e" style="padding:26px 40px 30px 40px;" class="pad">
-        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin-bottom:14px;">
+        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" border="0" style="margin-bottom:14px;table-layout:fixed;">
           <tr><td style="border-top:1px solid #2f4d75;border-bottom:1px solid #2f4d75;height:4px;font-size:0;line-height:0;">&nbsp;</td></tr>
         </table>
         <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;font-size:13px;line-height:2;color:#8fa3bd;">{{FOOTER}}</div>
