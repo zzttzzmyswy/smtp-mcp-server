@@ -5,6 +5,10 @@
 //!   （`.mail-table-wrap`），宽表在窄屏自动出现左右滚动条而非被压缩；
 //! - 正文采用系统字体栈（`-apple-system`/`Segoe UI`/`Roboto`/苹方/雅黑），
 //!   各设备跟随自身默认 UI 字体；仅品牌装饰元素使用衬线/楷体并带跨平台回退。
+//! - `body` 默认自动识别 Markdown（`# ` 标题、`- ` 列表、`>` 引用、```` ``` ```` 代码块、
+//!   管道表格、加粗等），命中即按 Markdown 渲染；也可用 `body_format` 显式指定。
+
+use crate::markdown;
 
 pub const DEFAULT_BRAND: &str = "Multica MCP";
 
@@ -14,10 +18,12 @@ pub const TEMPLATE: &str = include_str!("../templates/mail.html");
 #[derive(Debug, Clone, Default)]
 pub struct RenderOptions {
     pub subject: String,
-    /// 纯文本正文（无 html_body 时的内容来源）
+    /// 正文（纯文本或 Markdown，按 body_format 决定渲染方式）
     pub body: String,
     /// AI Agent 自带完整 HTML（最高优先级）
     pub html_body: Option<String>,
+    /// 正文渲染格式：auto（默认，自动检测）| text | markdown
+    pub body_format: markdown::BodyFormat,
     /// 页眉品牌名（缺省 DEFAULT_BRAND）
     pub brand: Option<String>,
     /// 问候语（缺省"您好："，空串则不渲染问候行）
@@ -47,13 +53,21 @@ pub fn render(opts: &RenderOptions) -> String {
         }
     };
 
-    // 正文 HTML：html_body 优先（AI Agent 自带模板）；否则纯文本 body 转 HTML
+    // 正文 HTML：html_body 优先（AI Agent 自带模板）；
+    // 否则按 body_format 渲染（markdown 自动转换 / 纯文本）
     let (body_html, raw_for_preheader) = match &opts.html_body {
         Some(html) => {
             let trimmed = html.trim();
             (trimmed.to_string(), trimmed.to_string())
         }
-        None => (plain_to_html(&opts.body), opts.body.clone()),
+        None => {
+            if opts.body_format.use_markdown(&opts.body) {
+                let html = markdown::markdown_to_html(&opts.body);
+                (html.clone(), html)
+            } else {
+                (plain_to_html(&opts.body), opts.body.clone())
+            }
+        }
     };
     let preheader = make_preheader(&raw_for_preheader);
     // 把正文中的 .mail-table 自动包进横向滚动容器，宽表在窄屏自动出现左右滚动条
@@ -147,7 +161,7 @@ fn escape_html_rows(lines: &[&str]) -> String {
         .join("<br>")
 }
 
-fn tables_cells<'a>(row: &'a str) -> Vec<&'a str> {
+fn tables_cells(row: &str) -> Vec<&str> {
     let parts: Vec<&str> = row.split('|').collect();
     parts
         .iter()
@@ -419,7 +433,7 @@ fn is_tag_boundary(s: &str, i: usize, is_close: bool) -> bool {
     }
 }
 
-fn escape_html(s: &str) -> String {
+pub fn escape_html(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")

@@ -2,6 +2,7 @@ use crate::attachments::{self, AttachmentInput};
 use crate::auth::Authenticator;
 use crate::config::Config;
 use crate::mail;
+use crate::markdown::BodyFormat;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -75,7 +76,7 @@ fn send_email_tool_schema() -> Value {
             "type": "object",
             "properties": {
                 "subject": { "type": "string", "description": "邮件主题" },
-                "body": { "type": "string", "description": "纯文本正文；未提供 html_body 时用默认 HTML 模板排版（支持换行分段）" },
+                "body": { "type": "string", "description": "正文。默认 auto：自动识别 Markdown（标题/列表/引用/表格/加粗等）并按 Markdown 渲染，普通文本按纯文本排版；也可用 body_format 显式指定 text 或 markdown" },
                 "receiver": {
                     "type": "array",
                     "items": { "type": "string" },
@@ -83,6 +84,7 @@ fn send_email_tool_schema() -> Value {
                     "description": "收件人邮箱列表，至少一个"
                 },
                 "html_body": { "type": "string", "description": "可选：AI Agent 自带完整 HTML 正文（可含 <table class=\"mail-table\">/<img> 等），提供后优先级最高，不使用默认模板；宽表会被自动包进横向滚动容器，窄屏出现左右滚动条，请勿自行加 overflow 包裹" },
+                "body_format": { "type": "string", "enum": ["auto", "text", "markdown"], "description": "可选：body 渲染格式。auto（默认）自动检测是否 Markdown；text 强制按纯文本排版；markdown 强制按 Markdown 转换 HTML" },
                 "brand": { "type": "string", "description": "可选：页眉品牌名（默认 Multica MCP），默认模板使用" },
                 "greeting": { "type": "string", "description": "可选：问候语（默认“您好：”，空串不显示问候行），默认模板使用" },
                 "sign_name": { "type": "string", "description": "可选：落款人名（默认沿用品牌名，空串不显示签名区），默认模板使用" },
@@ -160,6 +162,9 @@ struct SendEmailArgs {
     /// AI Agent 自带完整 HTML 正文（最高优先级，未提供时用默认模板渲染 body）
     #[serde(default)]
     html_body: Option<String>,
+    /// body 渲染格式：auto（默认）| text | markdown
+    #[serde(default, deserialize_with = "deserialize_body_format")]
+    body_format: BodyFormat,
     /// 页眉品牌名（缺省 "Multica MCP"）
     #[serde(default)]
     brand: Option<String>,
@@ -169,6 +174,14 @@ struct SendEmailArgs {
     /// 落款人名（缺省沿用品牌名；空串则不显示签名区）
     #[serde(default)]
     sign_name: Option<String>,
+}
+
+fn deserialize_body_format<'de, D>(d: D) -> Result<BodyFormat, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let s = String::deserialize(d)?;
+    s.parse().map_err(serde::de::Error::custom)
 }
 
 async fn handle_tools_call(state: &AppState, id: Option<Value>, params: Option<Value>) -> Reply {
@@ -193,6 +206,14 @@ async fn handle_tools_call(state: &AppState, id: Option<Value>, params: Option<V
         Err(e) => return tool_error(id, e),
     };
 
+    let render_kind = if args.html_body.is_some() {
+        "custom"
+    } else if args.body_format.use_markdown(&args.body) {
+        "markdown"
+    } else {
+        "text"
+    };
+
     // 审计日志：时间/收件人/主题长度，不记录正文、密钥、授权码
     tracing::info!(
         event = "send_email",
@@ -203,13 +224,14 @@ async fn handle_tools_call(state: &AppState, id: Option<Value>, params: Option<V
             std::fs::metadata(&f.path).map(|m| m.len()).unwrap_or(0)
         }).sum::<u64>(),
         html = args.html_body.is_some(),
-        template = args.html_body.as_ref().map(|_| "custom").unwrap_or("default"),
+        template = render_kind,
     );
 
     let html_content = crate::template::render(&crate::template::RenderOptions {
         subject: args.subject.clone(),
         body: args.body.clone(),
         html_body: args.html_body.clone(),
+        body_format: args.body_format,
         brand: args.brand.clone(),
         greeting: args.greeting.clone(),
         sign_name: args.sign_name.clone(),

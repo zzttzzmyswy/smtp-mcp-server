@@ -2,6 +2,7 @@ mod attachments;
 mod auth;
 mod config;
 mod mail;
+mod markdown;
 mod mcp;
 mod template;
 

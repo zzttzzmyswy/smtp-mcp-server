@@ -2,7 +2,7 @@
 
 基于 **Rust** 的 **MCP（HTTP/SSE transport）邮件发送服务**：提供 `send_email` 工具，经 SMTP（网易 126）发送通知邮件。设计定位为**跨 runtime 的 Web 服务**——各机器上的 Multica agent 通过 MCP 远程传输调用它，对外由 **nginx 反向代理**统一入口并终结 TLS。
 
-**核心指标**：空闲常驻内存约 **6MB**（目标 <30MB）；二进制 ~4.2MB（strip + LTO）；支持静态/精简构建。
+**核心指标**：空闲常驻内存约 **9MB**（目标 <30MB）；二进制 ~4.6MB（strip + LTO）；支持静态/精简构建。
 
 ## 功能
 
@@ -10,6 +10,7 @@
   - Streamable HTTP：`POST /mcp`（现代标准，Python/TS SDK 默认）
   - Legacy HTTP+SSE：`GET /sse` + `POST /messages?session_id=...`
 - **`send_email` 工具**：`subject`、`body`、`receiver[]`（多收件人）、`attachments[]`（可选，base64 内容 + 文件名）
+- **正文自动格式化**：`body` 默认 `auto` —— 自动识别 Markdown（标题/列表/引用/表格/代码块/加粗等）并按内置 HTML 模板渲染；普通纯文本保持既有排版；也可用 `body_format`（`auto` / `text` / `markdown`）显式指定，或传 `html_body` 使用 AI Agent 自带完整 HTML
 - **密钥认证**：配置多个 key，请求携带任一（`Authorization: Bearer <key>` 或 `X-API-Key: <key>`）；恒定时间比较（SHA-256 摘要 + 恒定时间异或累积），错误/缺失 key 返回统一 `401`，无数据泄露
 - **SMTP**：支持 126 `smtp.126.com` 465/SSL、587/STARTTLS，用 **SMTP 授权码**（非登录密码）认证
 - **附件安全**：单个附件 ≤1MB、单次总量 ≤1MB（默认）、扩展名白名单、大小/类型非法在落盘前拒绝；通过校验的附件写入**临时目录**，发送完成后自动清理
@@ -117,8 +118,9 @@ TLS 请在 443 server 块配置证书后复用同一段 location。
 ```json
 {
   "subject": "主题（支持中文，自动 RFC2047 编码）",
-  "body": "纯文本正文",
+  "body": "正文：普通纯文本或 Markdown（默认 auto 自动识别；标题/列表/引用/管道表格/代码块/加粗等均支持）",
   "receiver": ["a@example.com", "b@example.com"],
+  "body_format": "可选：auto（默认）| text（强制纯文本）| markdown（强制 Markdown 转换）",
   "html_body": "可选：AI Agent 自带完整 HTML 正文（可含 <table>/<img> 等），提供后优先级最高，不使用默认模板",
   "brand": "可选：页眉品牌名（默认 Multica MCP）",
   "greeting": "可选：问候语（默认“您好：”，空串不显示问候行）",
@@ -133,7 +135,8 @@ TLS 请在 443 server 块配置证书后复用同一段 location。
 ### 默认 HTML 模板
 
 - **未提供 `html_body`** 时，自动使用内置默认模板渲染邮件：响应式（桌面/手机自适应）、经典大气 + 中国元素（藏青主色、金色回纹、朱红印章、衬线宋体标题）
-- `body` 纯文本按空行分段转成 HTML 段落，HTML 全部转义防注入；`subject` 作标题、`brand` 作品牌（页眉/印章）、`sign_name` 作落款
+- `body` 默认 `auto`：命中 Markdown 特征（`# ` 标题、`- `/`1. ` 列表、`- [ ]` 任务列表、`>` 引用、```` ``` ```` 代码块、`|` 管道表格、`**` 加粗、`` ` ` `` 行内代码、链接/图片）即按 **Markdown 自动转换 HTML**；普通文本按纯文本排版（空行分段、转义防注入）。`body_format=text` 强制纯文本、`=markdown` 强制转换
+- Markdown 渲染映射到模板样式体系：标题 `.mail-h2`、段落 `.mail-p`、引用 `.mail-quote`、列表 `.mail-list`、表格 `.mail-table`（宽表同样自动包横向滚动容器）、图片 `.mail-img`；文本自动转义，Agent 内嵌原始 HTML（`<div>/<img>` 等）与 `html_body` 同信任模型放行
 - **提供 `html_body`** 时（AI Agent 自带模板），优先使用它，其余参数忽略
 - 支持正文区块：`<p class="mail-p">` 段落、`<table class="mail-table">` 表格、`<img class="mail-img">` 图片、`.mail-callout` 高亮、`.mail-quote` 引用、`.mail-list` 列表、`<a class="mail-btn">` 按钮
 - **宽表自动横向滚动**：`html_body` 中的 `<table class="mail-table">` 会被自动包进 `.mail-table-wrap` 滚动容器——窄屏（手机）下表格保持可读最小宽度，超宽时容器内置左右滚动条，可左右滑动查看，而非被压缩导致列内容截断。若 AI 已自行使用 `mail-table-wrap` 则不重复包裹
@@ -180,6 +183,7 @@ src/
   mcp.rs          MCP JSON-RPC 处理：initialize/tools/list/tools/call、send_email 编排与审计
   mail.rs         lettre SMTP 发送、收件人校验/白名单、MIME/附件构建、mime 推断
   template.rs     默认 HTML 模板渲染（include_str! 内嵌）、纯文本转 HTML、转义
+  markdown.rs     Markdown → HTML 渲染（pulldown-cmark 自定义渲染，映射模板样式体系）、Markdown 自动识别
   attachments.rs  附件 base64 解码/大小与类型校验/临时目录落盘与清理
   auth.rs         密钥认证：SHA-256 摘要 + 恒定时间比较
   config.rs       TOML 配置解析、env 插值、默认值

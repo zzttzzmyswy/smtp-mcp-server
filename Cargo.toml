@@ -1,6 +1,6 @@
 [package]
 name = "smtp-mcp-server"
-version = "0.3.1"
+version = "0.4.0"
 edition = "2021"
 description = "MCP (HTTP/SSE) SMTP email sending service with key auth, TLS, and low memory footprint"
 license = "MIT"
@@ -30,6 +30,7 @@ sha2 = "0.10"
 tempfile = "3"
 time = { version = "0.3", features = ["formatting"] }
 futures-util = "0.3"
+pulldown-cmark = "0.13.4"
 
 [dev-dependencies]
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls"] }
