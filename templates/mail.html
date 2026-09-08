@@ -10,8 +10,8 @@
 <!-- 邮件预览文字 -->
 <div style="display:none;max-height:0;overflow:hidden;mso-hide:all;">{{PREHEADER}}</div>
 <center>
-  <!-- 外框：桌面 640px，移动端全宽（media query 覆盖）；table-layout:fixed 防止宽表把外层撑宽 -->
-  <table role="presentation" class="outer" width="640" cellspacing="0" cellpadding="0" border="0" align="center" style="width:640px;max-width:100%;table-layout:fixed;background-color:#eef0f4;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;">
+  <!-- 外框：宽度随页面自由扩展（100%），不约束邮件整体宽度；table-layout:fixed 防止宽表把外层撑宽 -->
+  <table role="presentation" class="outer" width="100%" cellspacing="0" cellpadding="0" border="0" align="center" style="width:100%;max-width:100%;table-layout:fixed;background-color:#eef0f4;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;">
     <!-- ===== 简约页眉：品牌 + 日期 + 标题 ===== -->
     <tr>
       <td bgcolor="#1f3a5f" style="padding:34px 40px 30px 40px;" class="pad">

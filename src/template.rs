@@ -539,6 +539,20 @@ mod tests {
     }
 
     #[test]
+    fn outer_frame_is_fluid_not_fixed_px() {
+        // 用户要求外层框子不要约束邮件整体宽度，桌面端应随页面自由扩展
+        let r = render(&RenderOptions {
+            subject: "S".into(),
+            body: "B".into(),
+            ..Default::default()
+        });
+        assert!(!r.contains("width:640px"), "外框不应有 640px 固定宽度: {}", r);
+        assert!(!r.contains("width=\"640\""), "外框属性不应为 width=640: {}", r);
+        assert!(r.contains("class=\"outer\" width=\"100%\""), "外框应 width=100%: {}", r);
+        assert!(r.contains("style=\"width:100%;"), "外框 style 应 width:100%: {}", r);
+    }
+
+    #[test]
     fn render_uses_html_body_when_provided() {
         let r = render(&RenderOptions {
             subject: "S".into(),
