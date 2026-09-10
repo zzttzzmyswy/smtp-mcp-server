@@ -1,18 +1,15 @@
-//! 默认邮件 HTML 模板渲染。
-//! - AI Agent 未提供自定义 `html_body` 时，用此模板渲染邮件正文；
-//! - 模板为桌面/移动端响应式，支持文本 / 表格 / 图片 / 引用 / 列表 / 按钮等区块（class 见模板）；
-//! - `html_body` 中的 `<table class="mail-table">` 会被自动包进横向滚动容器
+//! 邮件正文 HTML 组装——**不做任何外包装**。
+//!
+//! - `html_body`（AI Agent 自带完整 HTML）优先级最高，原样作为正文；
+//! - 否则按 `body_format` 渲染 `body`：Markdown 自动转换
+//!   （`markdown::markdown_to_html`）或纯文本分段（`plain_to_html`）；
+//! - `<table class="mail-table">` 会被自动包进横向滚动容器
 //!   （`.mail-table-wrap`），宽表在窄屏自动出现左右滚动条而非被压缩；
-//! - 正文采用系统字体栈（`-apple-system`/`Segoe UI`/`Roboto`/苹方/雅黑），
-//!   各设备跟随自身默认 UI 字体；仅品牌装饰元素使用衬线/楷体并带跨平台回退。
-//! - `body` 默认自动识别 Markdown（`# ` 标题、`- ` 列表、`>` 引用、```` ``` ```` 代码块、
-//!   管道表格、加粗等），命中即按 Markdown 渲染；也可用 `body_format` 显式指定。
+//! - 输出仅是最小 HTML 文档骨架：除字符集/视口声明外，无品牌、无页眉页脚、
+//!   无固定宽度/背景/字号等任何外包装样式——邮件即原始正文，
+//!   宽度/字体完全跟随邮件阅读器默认行为。
 
 use crate::markdown;
-
-pub const DEFAULT_BRAND: &str = "Multica MCP";
-
-pub const TEMPLATE: &str = include_str!("../templates/mail.html");
 
 /// 渲染参数
 #[derive(Debug, Clone, Default)]
@@ -24,112 +21,46 @@ pub struct RenderOptions {
     pub html_body: Option<String>,
     /// 正文渲染格式：auto（默认，自动检测）| text | markdown
     pub body_format: markdown::BodyFormat,
-    /// 页眉品牌名（缺省 DEFAULT_BRAND）
-    pub brand: Option<String>,
-    /// 问候语（缺省"您好："，空串则不渲染问候行）
-    pub greeting: Option<String>,
-    /// 落款人名（缺省沿用品牌名；空串则不渲染签名区）
-    pub sign_name: Option<String>,
 }
 
 pub fn render(opts: &RenderOptions) -> String {
-    let brand = opts
-        .brand
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .unwrap_or(DEFAULT_BRAND);
-    let greeting = opts.greeting.as_deref().unwrap_or("您好：");
-    // 签名区：None（未提供）→ 沿用品牌名显示；Some("") → 不显示签名区
-    let sign_name = match &opts.sign_name {
-        None => Some(brand),
-        Some(s) => {
-            let t = s.trim();
-            if t.is_empty() {
-                None
-            } else {
-                Some(t)
-            }
-        }
-    };
-
-    // 正文 HTML：html_body 优先（AI Agent 自带模板）；
+    // 正文 HTML：html_body 优先（AI Agent 自带）；
     // 否则按 body_format 渲染（markdown 自动转换 / 纯文本）
-    let (body_html, raw_for_preheader) = match &opts.html_body {
-        Some(html) => {
-            let trimmed = html.trim();
-            (trimmed.to_string(), trimmed.to_string())
-        }
+    let body_html = match &opts.html_body {
+        Some(html) => html.trim().to_string(),
         None => {
             if opts.body_format.use_markdown(&opts.body) {
-                let html = markdown::markdown_to_html(&opts.body);
-                (html.clone(), html)
+                markdown::markdown_to_html(&opts.body)
             } else {
-                (plain_to_html(&opts.body), opts.body.clone())
+                plain_to_html(&opts.body)
             }
         }
     };
-    let preheader = make_preheader(&raw_for_preheader);
     // 把正文中的 .mail-table 自动包进横向滚动容器，宽表在窄屏自动出现左右滚动条
     let body_html = wrap_wide_tables(&body_html);
 
-    let now = time::OffsetDateTime::now_utc();
-    let date = format!(
-        "{:04} 年 {:02} 月 {:02} 日",
-        now.year(),
-        now.month() as u8,
-        now.day()
-    );
-
-    let greeting_cell = if greeting.is_empty() {
-        String::new()
-    } else {
-        format!(
-            "<p style=\"margin:0 0 18px 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;font-size:16px;line-height:1.9;color:#3a4556;\">{}</p>",
-            escape_html(greeting)
-        )
-    };
-    let sign_cell = sign_name
-        .map(|name| {
-            let initial = name
-                .chars()
-                .next()
-                .map(|c| c.to_uppercase().collect::<String>())
-                .unwrap_or_default();
-            let role = "Multica · 自动通知";
-            format!(
-                concat!(
-                    "<table role=\"presentation\" width=\"100%\" cellspacing=\"0\" cellpadding=\"0\" border=\"0\" style=\"margin-top:28px;\">",
-                    "<tr><td style=\"border-top:1px solid #e6e9ef;padding:16px 0 4px 0;\">",
-                    "<table role=\"presentation\" cellspacing=\"0\" cellpadding=\"0\" border=\"0\"><tr>",
-                    "<td valign=\"middle\" style=\"padding-right:12px;\">",
-                    "<table role=\"presentation\" width=\"38\" height=\"38\" cellspacing=\"0\" cellpadding=\"0\" border=\"0\" style=\"background-color:#eef1f6;border-radius:50%;\">",
-                    "<tr><td align=\"center\" valign=\"middle\" style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;font-size:15px;font-weight:700;color:#1f3a5f;\">{}</td></tr></table></td>",
-                    "<td valign=\"middle\"><div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;font-size:15px;font-weight:600;color:#1f3a5f;\">{}</div>",
-                    "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;font-size:13px;color:#8792a3;margin-top:2px;\">{}</div></td>",
-                    "</td></tr></table></td></tr></table>"
-                ),
-                initial,
-                escape_html(name),
-                role
-            )
-        })
-        .unwrap_or_default();
-
-    let footer = "本邮件由 smtp-mcp-server · MCP 邮件服务自动发出";
-
-    TEMPLATE
-        .replace("{{PREHEADER}}", &preheader)
-        .replace("{{BRAND}}", escape_html(brand).as_str())
-        .replace("{{DATE}}", &date)
-        .replace("{{TITLE}}", escape_html(&opts.subject).as_str())
-        .replace("{{GREETING_CELL}}", &greeting_cell)
-        .replace("{{BODY}}", &body_html)
-        .replace("{{SIGN_CELL}}", &sign_cell)
-        .replace("{{FOOTER}}", footer)
+    // 最小 HTML 文档骨架：仅字符集/视口声明与正文，
+    // 不约束宽度、不设背景/字号/字体——全部跟随邮件阅读器默认行为
+    format!(
+        concat!(
+            "<!DOCTYPE html>\n",
+            "<html lang=\"zh-CN\">\n",
+            "<head>\n",
+            "<meta charset=\"utf-8\">\n",
+            "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n",
+            "<title>{}</title>\n",
+            "</head>\n",
+            "<body>\n",
+            "{}\n",
+            "</body>\n",
+            "</html>\n"
+        ),
+        escape_html(&opts.subject),
+        body_html
+    )
 }
 
-/// 纯文本正文 → 模板正文片段：按空行分段，段内换行转 <br>，全部转义防注入；
+/// 纯文本正文 → 正文片段：按空行分段，段内换行转 <br>，全部转义防注入；
 /// 连续 `|` 行组成的 Markdown 表格会转成真 HTML 表格（内联样式，兼容剥除 style 的客户端）。
 pub fn plain_to_html(text: &str) -> String {
     let mut out = String::new();
@@ -441,31 +372,6 @@ pub fn escape_html(s: &str) -> String {
         .replace('\'', "&#39;")
 }
 
-/// 邮件预览文字：去除 HTML 标签后取前 ~90 字符
-fn make_preheader(raw: &str) -> String {
-    let text = strip_tags(raw);
-    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    let mut out: String = text.chars().take(88).collect();
-    if text.chars().count() > 88 {
-        out.push('…');
-    }
-    out
-}
-
-fn strip_tags(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut in_tag = false;
-    for c in s.chars() {
-        match c {
-            '<' => in_tag = true,
-            '>' => in_tag = false,
-            _ if !in_tag => out.push(c),
-            _ => {}
-        }
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -539,17 +445,21 @@ mod tests {
     }
 
     #[test]
-    fn outer_frame_is_fluid_not_fixed_px() {
-        // 用户要求外层框子不要约束邮件整体宽度，桌面端应随页面自由扩展
+    fn render_has_no_outer_frame_or_brand_wrapper() {
+        // 用户要求删除外包装模板：邮件即原始正文，不再有品牌页眉/页脚/固定宽度外框
         let r = render(&RenderOptions {
             subject: "S".into(),
             body: "B".into(),
             ..Default::default()
         });
-        assert!(!r.contains("width:640px"), "外框不应有 640px 固定宽度: {}", r);
-        assert!(!r.contains("width=\"640\""), "外框属性不应为 width=640: {}", r);
-        assert!(r.contains("class=\"outer\" width=\"100%\""), "外框应 width=100%: {}", r);
-        assert!(r.contains("style=\"width:100%;"), "外框 style 应 width:100%: {}", r);
+        assert!(!r.contains("width:640px"), "不应有 640px 固定宽度: {}", r);
+        assert!(!r.contains("width=\"640\""), "不应有 width=640 属性: {}", r);
+        assert!(!r.contains("Multica MCP"), "不应有品牌名: {}", r);
+        assert!(!r.contains("您好"), "不应有自动问候语: {}", r);
+        assert!(!r.contains("本邮件由 smtp-mcp-server"), "不应有页脚: {}", r);
+        assert!(!r.contains("邮件预览文字"), "不应有 preheader: {}", r);
+        assert!(r.contains("<body>"), "应有最小 body 骨架: {}", r);
+        assert!(r.contains(">B</p>"), "正文应直接呈现: {}", r);
     }
 
     #[test]
@@ -565,45 +475,27 @@ mod tests {
     }
 
     #[test]
-    fn render_all_placeholders_filled() {
+    fn render_plain_body_directly_no_wrapper() {
         let r = render(&RenderOptions {
             subject: "测试主题 <ok>".into(),
             body: "正文第一段。\n\n第二段。".into(),
             ..Default::default()
         });
         assert!(!r.contains("{{"), "不应残留模板占位符: {:?}", r);
-        assert!(r.contains("测试主题 &lt;ok&gt;"));
-        assert!(r.contains("Multica MCP"));
-        assert!(r.contains("您好"));
-        assert!(r.contains("mail-p"));
-        assert!(r.contains("<!-- 邮件预览文字 -->"));
+        assert!(r.contains("测试主题 &lt;ok&gt;"), "subject 转义进 title: {}", r);
+        assert!(r.contains("正文第一段"), "正文应直接呈现: {}", r);
+        assert!(!r.contains("Multica MCP"), "不应有品牌元素: {}", r);
     }
 
     #[test]
-    fn brand_and_greeting_take_effect() {
+    fn render_markdown_body_uses_markdown_styles_without_wrapper() {
         let r = render(&RenderOptions {
             subject: "S".into(),
-            body: "B".into(),
-            brand: Some("Aurora".into()),
-            greeting: Some("尊敬的伙伴：".into()),
-            sign_name: Some("张三".into()),
+            body: "# 标题\n\n列表项".into(),
             ..Default::default()
         });
-        assert!(r.contains(">Aurora<"));
-        assert!(r.contains("尊敬的伙伴"));
-        assert!(r.contains("张三"));
-        assert!(r.contains("张"));
-    }
-
-    #[test]
-    fn empty_sign_name_omits_sign_block() {
-        let r = render(&RenderOptions {
-            subject: "S".into(),
-            body: "B".into(),
-            sign_name: Some("".into()),
-            ..Default::default()
-        });
-        assert!(!r.contains("Multica · 自动通知"));
+        assert!(r.contains("<h2 class=\"mail-h2\""), "Markdown 样式保留: {}", r);
+        assert!(!r.contains("Multica MCP"), "不应有品牌元素: {}", r);
     }
 
     #[test]

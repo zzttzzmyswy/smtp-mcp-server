@@ -83,11 +83,8 @@ fn send_email_tool_schema() -> Value {
                     "minItems": 1,
                     "description": "收件人邮箱列表，至少一个"
                 },
-                "html_body": { "type": "string", "description": "可选：AI Agent 自带完整 HTML 正文（可含 <table class=\"mail-table\">/<img> 等），提供后优先级最高，不使用默认模板；宽表会被自动包进横向滚动容器，窄屏出现左右滚动条，请勿自行加 overflow 包裹" },
+                "html_body": { "type": "string", "description": "可选：AI Agent 自带完整 HTML 正文（可含 <table class=\"mail-table\">/<img> 等），提供后优先级最高，直接作为邮件正文；宽表会被自动包进横向滚动容器，窄屏出现左右滚动条，请勿自行加 overflow 包裹" },
                 "body_format": { "type": "string", "enum": ["auto", "text", "markdown"], "description": "可选：body 渲染格式。auto（默认）自动检测是否 Markdown；text 强制按纯文本排版；markdown 强制按 Markdown 转换 HTML" },
-                "brand": { "type": "string", "description": "可选：页眉品牌名（默认 Multica MCP），默认模板使用" },
-                "greeting": { "type": "string", "description": "可选：问候语（默认“您好：”，空串不显示问候行），默认模板使用" },
-                "sign_name": { "type": "string", "description": "可选：落款人名（默认沿用品牌名，空串不显示签名区），默认模板使用" },
                 "attachments": {
                     "type": "array",
                     "items": {
@@ -159,21 +156,12 @@ struct SendEmailArgs {
     receiver: Vec<String>,
     #[serde(default)]
     attachments: Vec<AttachmentInput>,
-    /// AI Agent 自带完整 HTML 正文（最高优先级，未提供时用默认模板渲染 body）
+    /// AI Agent 自带完整 HTML 正文（最高优先级，未提供时渲染 body）
     #[serde(default)]
     html_body: Option<String>,
     /// body 渲染格式：auto（默认）| text | markdown
     #[serde(default, deserialize_with = "deserialize_body_format")]
     body_format: BodyFormat,
-    /// 页眉品牌名（缺省 "Multica MCP"）
-    #[serde(default)]
-    brand: Option<String>,
-    /// 问候语（缺省 "您好："）
-    #[serde(default)]
-    greeting: Option<String>,
-    /// 落款人名（缺省沿用品牌名；空串则不显示签名区）
-    #[serde(default)]
-    sign_name: Option<String>,
 }
 
 fn deserialize_body_format<'de, D>(d: D) -> Result<BodyFormat, D::Error>
@@ -232,9 +220,6 @@ async fn handle_tools_call(state: &AppState, id: Option<Value>, params: Option<V
         body: args.body.clone(),
         html_body: args.html_body.clone(),
         body_format: args.body_format,
-        brand: args.brand.clone(),
-        greeting: args.greeting.clone(),
-        sign_name: args.sign_name.clone(),
     });
 
     let report = match mail::send_email(

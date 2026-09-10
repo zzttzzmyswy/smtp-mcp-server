@@ -1,8 +1,8 @@
 //! Markdown 正文 → HTML 渲染。
 //!
-//! 将 AI Agent 提交的 Markdown 正文渲染为邮件 HTML 正文片段，输出映射到内置模板
-//! 已有的样式体系（`.mail-h2` / `.mail-p` / `.mail-quote` / `.mail-list` /
-//! `.mail-table` / `.mail-img` 等 class + 内联样式），宽表自动经
+//! 将 AI Agent 提交的 Markdown 正文渲染为邮件 HTML 正文片段（`.mail-h2` /
+//! `.mail-p` / `.mail-quote` / `.mail-list` / `.mail-table` / `.mail-img` 等
+//! class + 内联样式，兼容剥除 `<style>` 的客户端），宽表自动经
 //! [`crate::template::wrap_wide_tables`] 包进横向滚动容器。
 //!
 //! 基于轻量 CommonMark 解析器 `pulldown-cmark`（无额外 runtime 依赖，
@@ -47,7 +47,7 @@ impl core::str::FromStr for BodyFormat {
     }
 }
 
-// ---- 样式常量（与 templates/mail.html 中 mail-* class 保持一致，内联化以兼容剥 style 的客户端）----
+// ---- 样式常量（mail-* 正文片段自带内联样式，兼容剥除 style 的客户端）----
 
 const MAIL_P_STYLE: &str = "margin:0 0 14px 0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,'PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;font-size:17px;line-height:1.9;color:#3a4556;";
 const MAIL_H2_STYLE: &str = "font-family:Georgia,'Noto Serif CJK SC','Source Han Serif SC','Songti SC','STSong',serif;font-size:19px;color:#1f3a5f;font-weight:600;margin:28px 0 12px 0;letter-spacing:1px;";
@@ -63,7 +63,7 @@ const MAIL_HR_STYLE: &str = "border:0;border-top:1px solid #e6e9ef;margin:22px 0
 const MAIL_CHECKBOX_STYLE: &str = "vertical-align:-2px;margin:0 8px 0 0;accent-color:#1f3a5f;";
 
 /// 将 Markdown 正文渲染为 HTML 正文片段。
-/// 表格输出 `<table class="mail-table">`，由模板层的 `wrap_wide_tables` 统一
+/// 表格输出 `<table class="mail-table">`，由正文组装层的 `wrap_wide_tables` 统一
 /// 注入内联样式并包进横向滚动容器。
 pub fn markdown_to_html(text: &str) -> String {
     let opts = Options::ENABLE_TABLES
@@ -297,7 +297,7 @@ impl Renderer {
             }
             Table(_) => {
                 self.out.push('\n');
-                // 类名 mail-table 由模板层 wrap_wide_tables 自动包滚动容器 + 注入内联样式
+                // 类名 mail-table 由正文组装层 wrap_wide_tables 自动包滚动容器 + 注入内联样式
                 self.write("<table class=\"mail-table\">");
             }
             TableHead => {

@@ -69,7 +69,7 @@ fn mime_for(filename: &str) -> mime::Mime {
     }
 }
 
-/// 发送一封电子邮件。`html_body` 为最终邮件正文（HTML），已由调用方完成模板渲染；
+/// 发送一封电子邮件。`html_body` 为最终邮件正文（HTML），已由调用方完成正文渲染；
 /// 附件内容从 StagedAttachments 指向的临时文件读取（已通过校验），
 /// 发送完成后由调用方负责 Drop 清理。
 pub async fn send_email(
