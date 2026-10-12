@@ -10,6 +10,8 @@ pub struct Config {
     #[serde(default)]
     pub security: Security,
     #[serde(default)]
+    pub upload: Upload,
+    #[serde(default)]
     pub tls: Option<TlsConfig>,
 }
 
@@ -66,11 +68,11 @@ pub struct Security {
     /// 收件人白名单；空 = 不限
     #[serde(default)]
     pub receiver_whitelist: Vec<String>,
-    /// 单个附件最大字节数（默认 1MB）
+    /// 单个附件最大字节数（默认 10MB）
     #[serde(default = "default_max_attachment_bytes")]
     pub max_attachment_bytes: usize,
-    /// 单次请求所有附件总字节上限（默认 1MB）
-    #[serde(default = "default_max_attachment_bytes")]
+    /// 单次请求所有附件总字节上限（默认 10MB）
+    #[serde(default = "default_max_total_attachment_bytes")]
     pub max_total_attachment_bytes: usize,
     /// 单个 JSON 请求体上限（略大于附件上限以容纳 base64 膨胀）
     #[serde(default = "default_max_request_bytes")]
@@ -85,7 +87,7 @@ impl Default for Security {
         Security {
             receiver_whitelist: Vec::new(),
             max_attachment_bytes: default_max_attachment_bytes(),
-            max_total_attachment_bytes: default_max_attachment_bytes(),
+            max_total_attachment_bytes: default_max_total_attachment_bytes(),
             max_request_bytes: default_max_request_bytes(),
             allowed_attachment_extensions: Vec::new(),
         }
@@ -93,11 +95,68 @@ impl Default for Security {
 }
 
 fn default_max_attachment_bytes() -> usize {
-    1024 * 1024
+    10 * 1024 * 1024
+}
+
+fn default_max_total_attachment_bytes() -> usize {
+    10 * 1024 * 1024
 }
 
 fn default_max_request_bytes() -> usize {
     2 * 1024 * 1024
+}
+
+/// 带外上传通道（`create_upload` + `PUT /upload/:id`）。
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Upload {
+    /// 对外 URL 前缀（例 `https://mu.zztweb.top/smtp-mcp`）；为空时禁用上传方式
+    #[serde(default)]
+    pub public_base_url: String,
+    /// upload_id 从创建到被 send_email 消费的有效期（秒）
+    #[serde(default = "default_upload_ttl_secs")]
+    pub ttl_secs: u64,
+    /// 同时存在的未消费 upload 数量上限（含未上传与已上传）
+    #[serde(default = "default_upload_max_pending")]
+    pub max_pending: usize,
+    /// 已上传但未消费的总字节上限（默认 50MB）
+    #[serde(default = "default_upload_max_pending_bytes")]
+    pub max_pending_bytes: u64,
+}
+
+impl Default for Upload {
+    fn default() -> Self {
+        Upload {
+            public_base_url: String::new(),
+            ttl_secs: default_upload_ttl_secs(),
+            max_pending: default_upload_max_pending(),
+            max_pending_bytes: default_upload_max_pending_bytes(),
+        }
+    }
+}
+
+impl Upload {
+    /// 去掉末尾 `/` 后的对外前缀；为空时返回 None（调用方据此报错）。
+    pub fn base_url(&self) -> Option<&str> {
+        let trimmed = self.public_base_url.trim().trim_end_matches('/');
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    }
+}
+
+fn default_upload_ttl_secs() -> u64 {
+    900
+}
+
+fn default_upload_max_pending() -> usize {
+    16
+}
+
+fn default_upload_max_pending_bytes() -> u64 {
+    50 * 1024 * 1024
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -195,7 +254,45 @@ pass = "placeholder"
         assert_eq!(cfg.auth.keys, vec!["key1", "key2"]);
         assert_eq!(cfg.smtp.host, "smtp.126.com");
         assert_eq!(cfg.smtp.pass.as_deref(), Some("placeholder"));
-        assert_eq!(cfg.security.max_attachment_bytes, 1024 * 1024);
+        assert_eq!(cfg.security.max_attachment_bytes, 10 * 1024 * 1024);
+    }
+
+    #[test]
+    fn upload_defaults() {
+        let cfg = Config::parse(base_config()).unwrap();
+        assert_eq!(cfg.upload.ttl_secs, 900);
+        assert_eq!(cfg.upload.max_pending, 16);
+        assert_eq!(cfg.upload.max_pending_bytes, 50 * 1024 * 1024);
+        assert!(cfg.upload.public_base_url.is_empty());
+        assert_eq!(cfg.upload.base_url(), None);
+    }
+
+    #[test]
+    fn upload_section_parsed_and_base_url_normalized() {
+        let raw = format!(
+            "{}\n[upload]\npublic_base_url = \"https://mu.zztweb.top/smtp-mcp/\"\nttl_secs = 1\nmax_pending = 3\nmax_pending_bytes = 123\n",
+            base_config()
+        );
+        let cfg = Config::parse(&raw).unwrap();
+        assert_eq!(cfg.upload.ttl_secs, 1);
+        assert_eq!(cfg.upload.max_pending, 3);
+        assert_eq!(cfg.upload.max_pending_bytes, 123);
+        // 末尾 `/` 去重
+        assert_eq!(cfg.upload.base_url(), Some("https://mu.zztweb.top/smtp-mcp"));
+    }
+
+    #[test]
+    fn upload_unknown_field_rejected() {
+        let raw = format!("{}\n[upload]\nbogus = 1\n", base_config());
+        assert!(Config::parse(&raw).is_err());
+    }
+
+    #[test]
+    fn security_defaults_are_10mb() {
+        let cfg = Config::parse(base_config()).unwrap();
+        assert_eq!(cfg.security.max_total_attachment_bytes, 10 * 1024 * 1024);
+        // max_request_bytes 仍为 2MB：base64 内联路径实际仅适合小文件
+        assert_eq!(cfg.security.max_request_bytes, 2 * 1024 * 1024);
     }
 
     #[test]

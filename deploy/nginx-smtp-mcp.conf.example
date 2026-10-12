@@ -6,6 +6,9 @@
 #   - MCP 客户端 Base URL：https://<host>/smtp-mcp（streamable HTTP 走 /mcp）
 #     认证：Authorization: Bearer <key>
 #   - legacy：https://<host>/smtp-mcp/sse  +  POST /smtp-mcp/messages?session_id=...
+#   - 带外上传：PUT https://<host>/smtp-mcp/upload/<upload_id>（无认证头，id 即一次性凭据）
+#     该路径由 create_upload 返回的 upload_url 给出，因此 config.toml 里的
+#     upload.public_base_url 必须写成外部可见前缀（如 https://<host>/smtp-mcp）。
 #
 # 用法：放入 /etc/nginx/conf.d/smtp-mcp.conf，证书换成实际的。
 # nginx -t && systemctl reload nginx
@@ -19,7 +22,9 @@
 #     ssl_certificate_key /etc/nginx/certs/example.key;
 #     ssl_protocols       TLSv1.2 TLSv1.3;
 #
-#     client_max_body_size 16m;   # 覆盖请求体上限（约 14MB），必须 ≥ max_request_bytes
+#     # 附件上限 10MB（security.max_attachment_bytes），故此处须 ≥ 10m。
+#     # base64 内联通道另有 security.max_request_bytes（2MB）限制。
+#     client_max_body_size 16m;
 #
 #     location /smtp-mcp/ {
 #         proxy_pass http://127.0.0.1:8202/;   # 结尾斜杠：去掉 /smtp-mcp 前缀后转发
@@ -32,9 +37,22 @@
 #         proxy_read_timeout 3600s;            # SSE 长会话
 #         proxy_cache off;
 #     }
+#
+#     # 可选：让大文件上传边收边转发，不在 nginx 侧先缓冲完整请求体
+#     # （服务端本身是流式落盘的，这里只是省掉 nginx 的磁盘中转）
+#     location /smtp-mcp/upload/ {
+#         proxy_pass http://127.0.0.1:8202/upload/;
+#         proxy_http_version 1.1;
+#         proxy_set_header Host $host;
+#         proxy_request_buffering off;
+#         proxy_read_timeout 3600s;
+#         proxy_cache off;
+#     }
 # }
 
 # --- 方式 B：挂到现有 443 server 上，只需加这段 location（适合本工作区：172.26.13.24） ---
+# client_max_body_size 16m;   # server 或 http 块中，须 ≥ 10m
+#
 # location /smtp-mcp/ {
 #     proxy_pass http://127.0.0.1:8202/;
 #     proxy_http_version 1.1;
@@ -43,6 +61,16 @@
 #     proxy_set_header Connection "";
 #     chunked_transfer_encoding on;
 #     proxy_buffering off;
+#     proxy_read_timeout 3600s;
+#     proxy_cache off;
+# }
+#
+# # 可选：上传路径关闭请求体缓冲（同上）
+# location /smtp-mcp/upload/ {
+#     proxy_pass http://127.0.0.1:8202/upload/;
+#     proxy_http_version 1.1;
+#     proxy_set_header Host $host;
+#     proxy_request_buffering off;
 #     proxy_read_timeout 3600s;
 #     proxy_cache off;
 # }
