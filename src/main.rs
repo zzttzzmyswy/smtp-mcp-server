@@ -259,6 +259,22 @@ fn upload_error(status: StatusCode, msg: &str) -> Response {
     (status, Json(json!({ "error": msg }))).into_response()
 }
 
+/// 上传过程中客户端断开（handler future 被 drop）时，把条目从 Uploading 清掉，
+/// 避免该 id 卡住直到 TTL；正常完成或已自行 abort 后调用 `disarm`。
+struct UploadAbortGuard<'a> {
+    store: &'a uploads::UploadStore,
+    id: &'a str,
+    armed: bool,
+}
+
+impl Drop for UploadAbortGuard<'_> {
+    fn drop(&mut self) {
+        if self.armed {
+            self.store.abort(self.id);
+        }
+    }
+}
+
 /// 边收边落盘：不把整个 body 读进内存。
 /// 超过 `security.max_attachment_bytes` 立即中止（删文件 + abort 条目）返回 413。
 async fn upload_handler(
@@ -274,6 +290,12 @@ async fn upload_handler(
             UploadErr::Conflict => upload_error(StatusCode::CONFLICT, "upload already used"),
         };
     }
+
+    let mut guard = UploadAbortGuard {
+        store: &st.app.uploads,
+        id: &id,
+        armed: true,
+    };
 
     let dir = match tempfile::TempDir::new() {
         Ok(d) => d,
@@ -351,6 +373,7 @@ async fn upload_handler(
     drop(file);
 
     let sha256 = uploads::digest_hex(&hasher.finalize());
+    guard.armed = false; // 之后由 finish_upload 接管状态
     let filename = st.app.uploads.filename_of(&id).unwrap_or_default();
     if let Err(e) = st.app.uploads.finish_upload(&id, dir, path, size, sha256.clone()) {
         return match e {
