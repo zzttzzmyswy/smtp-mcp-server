@@ -375,3 +375,167 @@ fn unknown_method_returns_jsonrpc_error() {
         assert_eq!(json["error"]["code"], -32601);
     });
 }
+
+/// 附件的 sha256 校验与宽容解码在 HTTP 层生效：
+/// 都发生在写盘/发送之前，因此可被前置校验拦住，不触发真实 SMTP。
+/// 收件人故意用白名单外的地址——错误信息里出现"白名单"即证明附件已通过解码/校验。
+async fn call_with_attachment(port: u16, attachment: serde_json::Value) -> serde_json::Value {
+    let call = mcp_req(
+        "tools/call",
+        json!({
+            "name": "send_email",
+            "arguments": {
+                "subject": "t",
+                "body": "b",
+                "receiver": ["u@evil.com"],
+                "attachments": [attachment]
+            }
+        }),
+        1,
+    );
+    client()
+        .post(format!("{}/mcp", base(port)))
+        .header("authorization", format!("Bearer {}", KEY))
+        .json(&call)
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap()
+}
+
+/// 折行 + URL-safe 字母表 + 去 padding 的 base64，模拟 LLM 逐 token 输出习惯
+fn lenient_b64(raw: &[u8]) -> String {
+    base64::engine::general_purpose::STANDARD
+        .encode(raw)
+        .trim_end_matches('=')
+        .replace('+', "-")
+        .replace('/', "_")
+        .as_bytes()
+        .chunks(8)
+        .map(|c| String::from_utf8_lossy(c).into_owned())
+        .collect::<Vec<_>>()
+        .join("\n\t")
+}
+
+fn sha256_hex(data: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(data)
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect()
+}
+
+#[test]
+fn tools_call_lenient_base64_with_correct_sha256_passes_decode() {
+    spawn_runtime_sync(async {
+        let port = 18210;
+        let _server = Server::start(port).await;
+        let raw = b"%PDF-1.4 lenient payload with whitespace and url-safe chars";
+        let json = call_with_attachment(
+            port,
+            json!({
+                "filename": "a.pdf",
+                "content": lenient_b64(raw),
+                "sha256": sha256_hex(raw).to_uppercase()
+            }),
+        )
+        .await;
+        // 附件已通过解码 + sha256 校验，卡在收件人白名单
+        assert_eq!(json["result"]["isError"], true);
+        let text = json["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("不在白名单内"), "unexpected: {}", text);
+    });
+}
+
+#[test]
+fn tools_call_bad_sha256_rejected_before_smtp() {
+    spawn_runtime_sync(async {
+        let port = 18211;
+        let _server = Server::start(port).await;
+        let raw = b"payload";
+        let json = call_with_attachment(
+            port,
+            json!({
+                "filename": "a.pdf",
+                "content": base64::engine::general_purpose::STANDARD.encode(raw),
+                "sha256": "0".repeat(64)
+            }),
+        )
+        .await;
+        assert_eq!(json["result"]["isError"], true);
+        let text = json["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("sha256 校验失败"), "unexpected: {}", text);
+    });
+}
+
+#[test]
+fn tools_call_malformed_sha256_rejected_before_smtp() {
+    spawn_runtime_sync(async {
+        let port = 18212;
+        let _server = Server::start(port).await;
+        let json = call_with_attachment(
+            port,
+            json!({
+                "filename": "a.pdf",
+                "content": base64::engine::general_purpose::STANDARD.encode(b"payload"),
+                "sha256": "not-a-hex-digest"
+            }),
+        )
+        .await;
+        assert_eq!(json["result"]["isError"], true);
+        let text = json["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("sha256 格式非法"), "unexpected: {}", text);
+    });
+}
+
+#[test]
+fn tools_call_truncated_content_detected_by_sha256() {
+    spawn_runtime_sync(async {
+        let port = 18213;
+        let _server = Server::start(port).await;
+        let raw = b"this payload is long enough to be truncated on a 4-char boundary 0123456789";
+        let b64 = base64::engine::general_purpose::STANDARD.encode(raw);
+        // 在 4 字符边界截断 → 仍是合法 base64，只有 sha256 能发现
+        let truncated = b64[..(b64.len() / 4 - 2) * 4].to_string();
+        let json = call_with_attachment(
+            port,
+            json!({
+                "filename": "a.pdf",
+                "content": truncated,
+                "sha256": sha256_hex(raw)
+            }),
+        )
+        .await;
+        assert_eq!(json["result"]["isError"], true);
+        let text = json["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("sha256 校验失败"), "unexpected: {}", text);
+    });
+}
+
+#[test]
+fn tools_list_schema_documents_small_file_limit_and_sha256() {
+    spawn_runtime_sync(async {
+        let port = 18214;
+        let _server = Server::start(port).await;
+        let resp = client()
+            .post(format!("{}/mcp", base(port)))
+            .header("authorization", format!("Bearer {}", KEY))
+            .json(&mcp_req("tools/list", json!({}), 1))
+            .send()
+            .await
+            .unwrap();
+        let json = resp.json::<serde_json::Value>().await.unwrap();
+        let tool = &json["result"]["tools"][0];
+        let props = &tool["inputSchema"]["properties"]["attachments"]["items"]["properties"];
+        assert!(props["sha256"].is_object(), "schema: {}", tool);
+        assert!(tool["description"].as_str().unwrap().contains("10KB"));
+        assert!(
+            tool["inputSchema"]["properties"]["attachments"]["description"]
+                .as_str()
+                .unwrap()
+                .contains("10KB")
+        );
+    });
+}

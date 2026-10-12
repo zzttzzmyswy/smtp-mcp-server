@@ -9,11 +9,13 @@
 - **MCP 两种传输协议**：
   - Streamable HTTP：`POST /mcp`（现代标准，Python/TS SDK 默认）
   - Legacy HTTP+SSE：`GET /sse` + `POST /messages?session_id=...`
-- **`send_email` 工具**：`subject`、`body`、`receiver[]`（多收件人）、`attachments[]`（可选，base64 内容 + 文件名）
+- **`send_email` 工具**：`subject`、`body`、`receiver[]`（多收件人）、`attachments[]`（可选，base64 内容 + 文件名 + 可选 `sha256` 校验和）
 - **正文自动格式化**：`body` 默认 `auto` —— 自动识别 Markdown（标题/列表/引用/表格/代码块/加粗等）并转换为 HTML 正文；普通纯文本保持既有排版；也可用 `body_format`（`auto` / `text` / `markdown`）显式指定，或传 `html_body` 直接使用 AI Agent 自带 HTML。**无外包装模板**：邮件即原始正文，宽度/字体完全跟随邮件阅读器默认行为
 - **密钥认证**：配置多个 key，请求携带任一（`Authorization: Bearer <key>` 或 `X-API-Key: <key>`）；恒定时间比较（SHA-256 摘要 + 恒定时间异或累积），错误/缺失 key 返回统一 `401`，无数据泄露
 - **SMTP**：支持 126 `smtp.126.com` 465/SSL、587/STARTTLS，用 **SMTP 授权码**（非登录密码）认证
 - **附件安全**：单个附件 ≤1MB、单次总量 ≤1MB（默认）、扩展名白名单、大小/类型非法在落盘前拒绝；通过校验的附件写入**临时目录**，发送完成后自动清理
+- **附件完整性**：附件可带可选 `sha256`（解码后原始字节的 SHA-256 hex），不匹配即拒绝——用于发现 base64 内容在传输中被截断或改写
+- **宽容 base64 解码**：自动去掉 `data:` URI 前缀、忽略全部 ASCII 空白、兼容 URL-safe 字母表（`-` `_`）、补齐缺失的 `=` padding；真正非法的内容仍然拒绝
 - **收件人白名单**（空 = 不限；可配完整邮箱或域后缀）
 - **可选服务端 TLS**（cert/key，直连场景）——默认架构下 TLS 由 nginx 终结
 - **日志安全**：不打印 key / 授权码 / 邮件正文；`send_email` 记录审计级日志（收件人、主题长度、附件数与大小）
@@ -124,10 +126,26 @@ TLS 请在 443 server 块配置证书后复用同一段 location。
   "html_body": "可选：AI Agent 自带 HTML 正文（可含 <table>/<img> 等），提供后直接作为邮件正文",
   "attachments": [
     { "filename": "report.pdf",
-      "content": "<base64 内容，解码后 ≤1MB>" }
+      "content": "<base64 内容，解码后 ≤1MB>",
+      "sha256": "<可选但强烈建议：解码后原始字节的 SHA-256 hex，64 字符，大小写均可>" }
   ]
 }
 ```
+
+附件字段说明：
+
+| 字段 | 必填 | 说明 |
+|---|---|---|
+| `filename` | 是 | 纯文件名（不含路径），扩展名须在服务端白名单内 |
+| `content` | 是 | base64 内容。**仅适合约 10KB 以内的小文件**——这些字符需由模型逐个生成，越大越容易丢字符或被截断；文件较大或为二进制时请勿使用 base64 |
+| `sha256` | 否（强烈建议） | 解码后**原始字节**的 SHA-256 hex（64 字符，大小写均可）。内容被截断/改写时即使仍是合法 base64 也会被此校验发现并拒绝 |
+
+`content` 采用**宽容解码**，容忍模型逐 token 书写时的常见偏差：`data:<mediatype>;base64,` 前缀、任意 ASCII 空白（含折行）、URL-safe 字母表（`-` `_`）、缺失的 `=` padding 都会被自动处理；长度 `%4 == 1`（无法补齐）或含字母表外字符的内容仍判为非法 base64。
+
+拒绝时的错误文案（`isError: true`）：
+- sha256 不匹配：`附件 <文件名> 的 sha256 校验失败：期望 <expected>，实际 <actual>（内容可能在传输中被截断或改写）`
+- sha256 非 64 位 hex：`附件 <文件名> 的 sha256 格式非法`
+- 非法 base64：`附件 <文件名> 内容不是合法 base64`
 
 ### 正文渲染（无外包装模板）
 
@@ -153,7 +171,7 @@ TLS 请在 443 server 块配置证书后复用同一段 location。
 - **低内存**：tokio + axum + lettre(rustls)，不引入 native-tls/openssl；空闲 RSS 实测 **~6MB**（`ps -o rss`）
 - **密钥认证**：密钥仅以 SHA-256 摘要驻留内存；比较走恒定时间路径，未命中不会泄露差异
 - **日志**：审计日志含 时间/收件人/主题长度/附件信息；不含密钥、授权码、正文。拒绝事件以 WARN 记录原因
-- **附件**：非法 base64、超限、类型不在白名单在写盘前直接拒绝并报错；合法附件写临时目录、发送完随 `StagedAttachments` drop 自动清理
+- **附件**：非法 base64、sha256 校验失败、超限、类型不在白名单在写盘前直接拒绝并报错；base64 解码为宽容模式（见「MCP 接入」）；合法附件写临时目录、发送完随 `StagedAttachments` drop 自动清理
 
 ## 测试
 
@@ -178,7 +196,7 @@ src/
   mail.rs         lettre SMTP 发送、收件人校验/白名单、MIME/附件构建、mime 推断
   template.rs     正文 HTML 组装（html_body 原样 / Markdown 转换 / 纯文本分段）+ 宽表滚动容器 + 转义
   markdown.rs     Markdown → HTML 正文片段（pulldown-cmark 自定义渲染，自带内联样式）、Markdown 自动识别
-  attachments.rs  附件 base64 解码/大小与类型校验/临时目录落盘与清理
+  attachments.rs  附件 base64 宽容解码/sha256 校验/大小与类型校验/临时目录落盘与清理
   auth.rs         密钥认证：SHA-256 摘要 + 恒定时间比较
   config.rs       TOML 配置解析、env 插值、默认值
 tests/integration.rs  HTTP 层端到端测试
