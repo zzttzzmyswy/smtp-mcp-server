@@ -5,18 +5,20 @@ mod mail;
 mod markdown;
 mod mcp;
 mod template;
+mod uploads;
 
 use axum::body::Bytes;
-use axum::extract::{Query, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::middleware as mw;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use futures_util::stream::{self, Stream};
 use futures_util::StreamExt;
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::net::SocketAddr;
@@ -27,6 +29,7 @@ use uuid::Uuid;
 
 use config::Config;
 use mcp::{AppState, Reply, RpcRequest};
+use uploads::UploadErr;
 
 /// legacy HTTP+SSE 会话表：session_id → 事件广播
 #[derive(Debug, Default)]
@@ -60,6 +63,7 @@ struct ServerState {
 
 // ---------- 认证 ----------
 
+/// 命中的 API key（明文候选，仅用于本次请求内的核对）。
 fn authenticated_key(headers: &HeaderMap, st: &ServerState) -> Option<String> {
     let bearer = headers
         .get(header::AUTHORIZATION)
@@ -76,6 +80,11 @@ fn authenticated_key(headers: &HeaderMap, st: &ServerState) -> Option<String> {
     } else {
         None
     }
+}
+
+/// 命中的 API key 的 SHA-256：作为带外上传条目的归属标识（不驻留明文）。
+fn caller_hash(headers: &HeaderMap, st: &ServerState) -> Option<[u8; 32]> {
+    authenticated_key(headers, st).map(|k| Sha256::digest(k.as_bytes()).into())
 }
 
 async fn auth_middleware(
@@ -143,7 +152,11 @@ async fn mcp_handler(
         Err(e) => return parse_error_response(-32700, &e.to_string()),
     };
 
-    let reply = mcp::handle_request(&st.app, req).await;
+    // 认证中间件已放行，此处必然取到 key
+    let Some(caller) = caller_hash(&headers, &st) else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+    let reply = mcp::handle_request(&st.app, caller, req).await;
     let msg = match reply {
         Reply::Response(r) => jsonrpc_response(&r),
         Reply::Silent => return StatusCode::ACCEPTED.into_response(),
@@ -211,6 +224,7 @@ struct MessagesQuery {
 async fn messages_handler(
     State(st): State<ServerState>,
     Query(q): Query<MessagesQuery>,
+    headers: HeaderMap,
     body: axum::body::Body,
 ) -> Response {
     if q.session_id.is_empty() {
@@ -225,12 +239,143 @@ async fn messages_handler(
         Ok(r) => r,
         Err(e) => return parse_error_response(-32700, &e.to_string()),
     };
-    let reply = mcp::handle_request(&st.app, req).await;
+    let Some(caller) = caller_hash(&headers, &st) else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+    let reply = mcp::handle_request(&st.app, caller, req).await;
     if let Reply::Response(r) = reply {
         let msg = jsonrpc_response(&r);
         st.sessions.publish(&q.session_id, msg).await;
     }
     StatusCode::ACCEPTED.into_response()
+}
+
+// ---------- 带外上传: PUT /upload/:id ----------
+//
+// 不挂 Bearer 认证中间件：URL 里的 32 位随机 id 本身就是一次性凭据，
+// 且条目绑定创建者的 API key（owner），别的 key 无法消费。
+
+fn upload_error(status: StatusCode, msg: &str) -> Response {
+    (status, Json(json!({ "error": msg }))).into_response()
+}
+
+/// 边收边落盘：不把整个 body 读进内存。
+/// 超过 `security.max_attachment_bytes` 立即中止（删文件 + abort 条目）返回 413。
+async fn upload_handler(
+    State(st): State<ServerState>,
+    Path(id): Path<String>,
+    body: axum::body::Body,
+) -> Response {
+    let max_bytes = st.app.config.security.max_attachment_bytes as u64;
+    // Pending -> Uploading；未知/已过期 404，状态不对 409
+    if let Err(e) = st.app.uploads.begin_upload(&id) {
+        return match e {
+            UploadErr::NotFound => upload_error(StatusCode::NOT_FOUND, "unknown or expired upload"),
+            UploadErr::Conflict => upload_error(StatusCode::CONFLICT, "upload already used"),
+        };
+    }
+
+    let dir = match tempfile::TempDir::new() {
+        Ok(d) => d,
+        Err(e) => {
+            st.app.uploads.abort(&id);
+            return upload_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &format!("创建临时目录失败: {}", e),
+            );
+        }
+    };
+    let path = dir.path().join("payload");
+
+    let mut file = match tokio::fs::File::create(&path).await {
+        Ok(f) => f,
+        Err(e) => {
+            st.app.uploads.abort(&id);
+            return upload_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &format!("创建临时文件失败: {}", e),
+            );
+        }
+    };
+
+    let mut stream = body.into_data_stream();
+    let mut hasher = Sha256::new();
+    let mut size: u64 = 0;
+
+    loop {
+        let chunk = match stream.next().await {
+            Some(Ok(c)) => c,
+            Some(Err(e)) => {
+                st.app.uploads.abort(&id);
+                return upload_error(
+                    StatusCode::BAD_REQUEST,
+                    &format!("读取上传数据失败: {}", e),
+                );
+            }
+            None => break,
+        };
+        size += chunk.len() as u64;
+        if size > max_bytes {
+            st.app.uploads.abort(&id);
+            return upload_error(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                &format!("文件超过单附件上限 {} 字节", max_bytes),
+            );
+        }
+        if st.app.uploads.exceeds_pending_bytes(size) {
+            st.app.uploads.abort(&id);
+            return upload_error(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                &format!(
+                    "待消费上传总字节超过上限 {} 字节",
+                    st.app.uploads.max_pending_bytes()
+                ),
+            );
+        }
+        hasher.update(&chunk);
+        if let Err(e) = tokio::io::AsyncWriteExt::write_all(&mut file, &chunk).await {
+            st.app.uploads.abort(&id);
+            return upload_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &format!("写入临时文件失败: {}", e),
+            );
+        }
+    }
+    if let Err(e) = tokio::io::AsyncWriteExt::flush(&mut file).await {
+        st.app.uploads.abort(&id);
+        return upload_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            &format!("写入临时文件失败: {}", e),
+        );
+    }
+    drop(file);
+
+    let sha256 = uploads::digest_hex(&hasher.finalize());
+    let filename = st.app.uploads.filename_of(&id).unwrap_or_default();
+    if let Err(e) = st.app.uploads.finish_upload(&id, dir, path, size, sha256.clone()) {
+        return match e {
+            UploadErr::NotFound => upload_error(StatusCode::NOT_FOUND, "unknown or expired upload"),
+            UploadErr::Conflict => upload_error(StatusCode::CONFLICT, "upload already used"),
+        };
+    }
+
+    tracing::info!(
+        event = "upload_completed",
+        upload_id_prefix = uploads::short_id(&id),
+        filename = %filename,
+        size = size,
+    );
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "upload_id": id,
+            "filename": filename,
+            "size": size,
+            "sha256": sha256,
+        })),
+    )
+        .into_response()
 }
 
 // ---------- 服务启动 ----------
@@ -243,6 +388,8 @@ fn build_router(st: ServerState) -> Router {
         .route_layer(mw::from_fn_with_state(st.clone(), auth_middleware));
     Router::new()
         .merge(authed)
+        // 带外上传：不走 Bearer 认证（id 即一次性凭据）
+        .route("/upload/:id", put(upload_handler))
         .route("/healthz", get(healthz))
         .with_state(st)
 }
@@ -275,12 +422,19 @@ async fn main() {
 
     let app = AppState {
         auth: auth::Authenticator::new(&cfg.auth.keys),
+        uploads: uploads::UploadStore::new(
+            cfg.upload.ttl_secs,
+            cfg.upload.max_pending,
+            cfg.upload.max_pending_bytes,
+        ),
         config: cfg,
     };
     let st = ServerState {
         app: Arc::new(app),
         sessions: Arc::new(Sessions::default()),
     };
+    // 后台定期清理过期上传（惰性清理之外的兜底，保证闲置时磁盘文件也会被删）
+    tokio::spawn(cleanup_uploads_loop(st.app.clone()));
     let router = build_router(st.clone());
 
     let addr: SocketAddr = match format!(
@@ -338,6 +492,16 @@ async fn rustls_tls_bind(
         .serve(router.into_make_service())
         .await
         .map_err(|e| format!("TLS 服务异常退出: {}", e))
+}
+
+/// 每 60s 清理一次过期上传条目（磁盘文件随条目里的 TempDir drop 删除）。
+async fn cleanup_uploads_loop(app: Arc<AppState>) {
+    let mut ticker = tokio::time::interval(std::time::Duration::from_secs(60));
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        ticker.tick().await;
+        app.uploads.cleanup_expired();
+    }
 }
 
 async fn shutdown_signal() {

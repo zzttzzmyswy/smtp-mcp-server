@@ -1,6 +1,6 @@
-//! HTTP 层集成测试：spawn 真实二进制，验证认证 / MCP 流 / 附件拒绝逻辑。
-//! 每个测试使用独立端口（并行安全）；测试用例不触发真实 SMTP 发送
-//! （拒发路径都被前置校验挡住）。
+//! HTTP 层集成测试：spawn 真实二进制，验证认证 / MCP 流 / 附件拒绝逻辑 / 带外上传通道。
+//! 每个测试使用独立端口（并行安全）；绝大多数用例不触发真实 SMTP 发送
+//! （拒发路径都被前置校验挡住，或收件人不在白名单）。
 
 use base64::Engine;
 use futures_util::StreamExt;
@@ -11,7 +11,9 @@ use std::process::{Child, Command};
 use std::time::Duration;
 
 const KEY: &str = "integration-test-key";
+const SECOND_KEY: &str = "second-key";
 
+/// 单附件上限保持 1MB、无 [upload] 段——阶段 1 行为的回归基线
 fn test_config(port: u16) -> String {
     format!(
         r#"
@@ -20,7 +22,7 @@ addr = "127.0.0.1"
 port = {port}
 
 [auth]
-keys = ["{key}", "second-key"]
+keys = ["{key}", "{second}"]
 
 [smtp]
 host = "smtp.126.com"
@@ -39,6 +41,48 @@ allowed_attachment_extensions = ["pdf", "txt"]
 "#,
         port = port,
         key = KEY,
+        second = SECOND_KEY,
+    )
+}
+
+/// 带外上传用例的配置：10MB 上限 + [upload] 段（`public_base_url` 指向本机端口）
+fn upload_config(port: u16, ttl_secs: u64, max_pending: usize, max_attachment_bytes: usize) -> String {
+    format!(
+        r#"
+[server]
+addr = "127.0.0.1"
+port = {port}
+
+[auth]
+keys = ["{key}", "{second}"]
+
+[smtp]
+host = "smtp.126.com"
+port = 465
+tls = "ssl"
+from = "sender@126.com"
+user = "sender@126.com"
+pass = "${{SMTP_PASS}}"
+
+[security]
+receiver_whitelist = ["allowed.com"]
+max_attachment_bytes = {max_att}
+max_total_attachment_bytes = {max_att}
+max_request_bytes = 2097152
+allowed_attachment_extensions = ["pdf", "txt"]
+
+[upload]
+public_base_url = "http://127.0.0.1:{port}"
+ttl_secs = {ttl}
+max_pending = {pending}
+max_pending_bytes = 52428800
+"#,
+        port = port,
+        key = KEY,
+        second = SECOND_KEY,
+        max_att = max_attachment_bytes,
+        ttl = ttl_secs,
+        pending = max_pending,
     )
 }
 
@@ -49,25 +93,36 @@ fn base(port: u16) -> String {
 struct Server {
     child: Child,
     cfg_path: String,
+    /// 该实例专属的 TMPDIR：上传落盘的临时文件都在这里，便于断言清理
+    tmp_dir: std::path::PathBuf,
 }
 
 impl Server {
     async fn start(port: u16) -> Server {
+        Self::start_with(port, test_config(port)).await
+    }
+
+    async fn start_with(port: u16, config: String) -> Server {
         let dir = std::env::temp_dir().join(format!("smtp-mcp-it-{}-{}", std::process::id(), port));
         fs::create_dir_all(&dir).unwrap();
         let cfg_path = dir.join("config.toml");
-        fs::write(&cfg_path, test_config(port)).unwrap();
+        fs::write(&cfg_path, config).unwrap();
+        // 上传临时文件隔离到本实例自己的目录（tempfile 读 TMPDIR）
+        let tmp_dir = dir.join("uploads-tmp");
+        fs::create_dir_all(&tmp_dir).unwrap();
 
         let bin = env!("CARGO_BIN_EXE_smtp-mcp-server");
         let child = Command::new(bin)
             .arg(&cfg_path)
             .env("SMTP_PASS", "smoke-test")
+            .env("TMPDIR", &tmp_dir)
             .spawn()
             .expect("spawn server");
 
         let server = Server {
             child,
             cfg_path: cfg_path.to_string_lossy().into_owned(),
+            tmp_dir,
         };
 
         // 等待就绪
@@ -86,6 +141,25 @@ impl Server {
             std::thread::sleep(Duration::from_millis(100));
         }
         panic!("server(port {}) did not become ready", port);
+    }
+
+    /// 该实例上传临时目录里的文件数（含子目录）
+    fn upload_tmp_file_count(&self) -> usize {
+        fn walk(dir: &std::path::Path, n: &mut usize) {
+            if let Ok(rd) = fs::read_dir(dir) {
+                for e in rd.flatten() {
+                    let p = e.path();
+                    if p.is_dir() {
+                        walk(&p, n);
+                    } else {
+                        *n += 1;
+                    }
+                }
+            }
+        }
+        let mut n = 0;
+        walk(&self.tmp_dir, &mut n);
+        n
     }
 }
 
@@ -405,6 +479,34 @@ async fn call_with_attachment(port: u16, attachment: serde_json::Value) -> serde
         .unwrap()
 }
 
+/// 用给定 key 发一封带单个附件的邮件；收件人故意在白名单外，
+/// 以便"附件已通过校验"与"被白名单拦下"两种情况可区分。
+async fn send_with_attachment(port: u16, key: &str, attachment: serde_json::Value) -> serde_json::Value {
+    let call = mcp_req(
+        "tools/call",
+        json!({
+            "name": "send_email",
+            "arguments": {
+                "subject": "t",
+                "body": "b",
+                "receiver": ["u@evil.com"],
+                "attachments": [attachment]
+            }
+        }),
+        1,
+    );
+    client()
+        .post(format!("{}/mcp", base(port)))
+        .header("authorization", format!("Bearer {}", key))
+        .json(&call)
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap()
+}
+
 /// 折行 + URL-safe 字母表 + 去 padding 的 base64，模拟 LLM 逐 token 输出习惯
 fn lenient_b64(raw: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD
@@ -527,9 +629,15 @@ fn tools_list_schema_documents_small_file_limit_and_sha256() {
             .await
             .unwrap();
         let json = resp.json::<serde_json::Value>().await.unwrap();
-        let tool = &json["result"]["tools"][0];
+        let tools = json["result"]["tools"].as_array().unwrap();
+        // 两个工具都注册了
+        let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
+        assert_eq!(names, vec!["send_email", "create_upload"]);
+
+        let tool = tools.iter().find(|t| t["name"] == "send_email").unwrap();
         let props = &tool["inputSchema"]["properties"]["attachments"]["items"]["properties"];
         assert!(props["sha256"].is_object(), "schema: {}", tool);
+        assert!(props["upload_id"].is_object(), "schema: {}", tool);
         assert!(tool["description"].as_str().unwrap().contains("10KB"));
         assert!(
             tool["inputSchema"]["properties"]["attachments"]["description"]
@@ -537,5 +645,461 @@ fn tools_list_schema_documents_small_file_limit_and_sha256() {
                 .unwrap()
                 .contains("10KB")
         );
+
+        let up = tools.iter().find(|t| t["name"] == "create_upload").unwrap();
+        assert!(up["description"].as_str().unwrap().contains("curl"));
+        assert_eq!(up["inputSchema"]["required"][0], "filename");
     });
+}
+
+// ---------- 带外上传通道（PUT /upload/:id）----------
+
+fn upload_cfg(port: u16) -> String {
+    upload_config(port, 900, 16, 10 * 1024 * 1024)
+}
+
+/// 调 create_upload，返回解析后的 JSON（upload_id / upload_url / …）
+async fn create_upload(port: u16, key: &str, filename: &str) -> serde_json::Value {
+    let resp = client()
+        .post(format!("{}/mcp", base(port)))
+        .header("authorization", format!("Bearer {}", key))
+        .json(&mcp_req(
+            "tools/call",
+            json!({ "name": "create_upload", "arguments": { "filename": filename } }),
+            1,
+        ))
+        .send()
+        .await
+        .unwrap();
+    let json = resp.json::<serde_json::Value>().await.unwrap();
+    assert_eq!(json["result"]["isError"], false, "create_upload failed: {}", json);
+    serde_json::from_str(json["result"]["content"][0]["text"].as_str().unwrap()).unwrap()
+}
+
+/// PUT 原始字节到 upload_url（不带认证头）
+async fn put_upload(upload_url: &str, bytes: Vec<u8>) -> reqwest::Response {
+    client()
+        .put(upload_url)
+        .body(bytes)
+        .send()
+        .await
+        .unwrap()
+}
+
+/// `create_upload` 返回可直传的 URL 与 id，且 URL 里带的是 32 位 hex
+#[test]
+fn create_upload_returns_url_and_id() {
+    spawn_runtime_sync(async {
+        let port = 18220;
+        let _server = Server::start_with(port, upload_cfg(port)).await;
+        let v = create_upload(port, KEY, "report.pdf").await;
+
+        let id = v["upload_id"].as_str().unwrap();
+        assert_eq!(id.len(), 32);
+        assert!(id.bytes().all(|c| c.is_ascii_hexdigit()));
+        assert_eq!(
+            v["upload_url"].as_str().unwrap(),
+            format!("http://127.0.0.1:{}/upload/{}", port, id)
+        );
+        assert_eq!(v["expires_in_secs"], 900);
+        assert_eq!(v["max_bytes"], 10 * 1024 * 1024);
+        assert!(v["hint"].as_str().unwrap().contains("curl -fsS -T"));
+    });
+}
+
+/// 未配置 upload.public_base_url → create_upload 返回 isError
+#[test]
+fn create_upload_without_public_base_url_is_error() {
+    spawn_runtime_sync(async {
+        let port = 18221;
+        // 用阶段 1 的配置（无 [upload] 段）
+        let _server = Server::start(port).await;
+        let resp = client()
+            .post(format!("{}/mcp", base(port)))
+            .header("authorization", format!("Bearer {}", KEY))
+            .json(&mcp_req(
+                "tools/call",
+                json!({ "name": "create_upload", "arguments": { "filename": "a.pdf" } }),
+                1,
+            ))
+            .send()
+            .await
+            .unwrap();
+        let json = resp.json::<serde_json::Value>().await.unwrap();
+        assert_eq!(json["result"]["isError"], true);
+        assert_eq!(
+            json["result"]["content"][0]["text"].as_str().unwrap(),
+            "服务端未配置 upload.public_base_url，无法使用上传方式"
+        );
+    });
+}
+
+/// 非法文件名 / 白名单外扩展名被拒
+#[test]
+fn create_upload_rejects_bad_filename() {
+    spawn_runtime_sync(async {
+        let port = 18222;
+        let _server = Server::start_with(port, upload_cfg(port)).await;
+        for (name, needle) in [
+            ("../etc/passwd", "非法附件文件名"),
+            ("dir/a.pdf", "非法附件文件名"),
+            ("evil.exe", "不在白名单"),
+        ] {
+            let resp = client()
+                .post(format!("{}/mcp", base(port)))
+                .header("authorization", format!("Bearer {}", KEY))
+                .json(&mcp_req(
+                    "tools/call",
+                    json!({ "name": "create_upload", "arguments": { "filename": name } }),
+                    1,
+                ))
+                .send()
+                .await
+                .unwrap();
+            let json = resp.json::<serde_json::Value>().await.unwrap();
+            assert_eq!(json["result"]["isError"], true, "filename {:?}", name);
+            let text = json["result"]["content"][0]["text"].as_str().unwrap();
+            assert!(text.contains(needle), "filename {:?}: {}", name, text);
+        }
+    });
+}
+
+/// 超过 max_pending 的 create_upload 被拒
+#[test]
+fn create_upload_rejects_over_max_pending() {
+    spawn_runtime_sync(async {
+        let port = 18223;
+        let _server = Server::start_with(port, upload_config(port, 900, 2, 10 * 1024 * 1024)).await;
+        let _a = create_upload(port, KEY, "a.pdf").await;
+        let _b = create_upload(port, KEY, "b.pdf").await;
+
+        let resp = client()
+            .post(format!("{}/mcp", base(port)))
+            .header("authorization", format!("Bearer {}", KEY))
+            .json(&mcp_req(
+                "tools/call",
+                json!({ "name": "create_upload", "arguments": { "filename": "c.pdf" } }),
+                1,
+            ))
+            .send()
+            .await
+            .unwrap();
+        let json = resp.json::<serde_json::Value>().await.unwrap();
+        assert_eq!(json["result"]["isError"], true);
+        assert!(json["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("上限 2"));
+    });
+}
+
+/// 上传成功后返回的 size/sha256 与本地计算一致（3MB，证明突破旧 1MB 上限）
+#[test]
+fn upload_3mb_returns_matching_size_and_sha256() {
+    spawn_runtime_sync(async {
+        let port = 18224;
+        let _server = Server::start_with(port, upload_cfg(port)).await;
+        let v = create_upload(port, KEY, "big.pdf").await;
+        let url = v["upload_url"].as_str().unwrap();
+
+        // 3MB 伪随机（可复现）
+        let data = pseudo_random(3 * 1024 * 1024);
+        let resp = put_upload(url, data.clone()).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let out = resp.json::<serde_json::Value>().await.unwrap();
+        assert_eq!(out["size"], data.len() as u64);
+        assert_eq!(out["filename"], "big.pdf");
+        assert_eq!(out["sha256"], sha256_hex(&data));
+        assert_eq!(out["upload_id"], v["upload_id"]);
+    });
+}
+
+/// 同一 id 第二次 PUT → 409；未知 id → 404
+#[test]
+fn upload_conflict_and_unknown_id() {
+    spawn_runtime_sync(async {
+        let port = 18225;
+        let _server = Server::start_with(port, upload_cfg(port)).await;
+        let v = create_upload(port, KEY, "a.pdf").await;
+        let url = v["upload_url"].as_str().unwrap();
+
+        let first = put_upload(url, b"first".to_vec()).await;
+        assert_eq!(first.status(), StatusCode::OK);
+
+        // 已完成上传：再次 PUT 冲突
+        let second = put_upload(url, b"second".to_vec()).await;
+        assert_eq!(second.status(), StatusCode::CONFLICT);
+
+        // 未知 id
+        let unknown = put_upload(
+            &format!("http://127.0.0.1:{}/upload/{}", port, "ab".repeat(16)),
+            b"x".to_vec(),
+        )
+        .await;
+        assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            unknown.json::<serde_json::Value>().await.unwrap()["error"],
+            "unknown or expired upload"
+        );
+    });
+}
+
+/// ttl_secs=1：过期后 PUT → 404
+#[test]
+fn upload_expired_id_returns_404() {
+    spawn_runtime_sync(async {
+        let port = 18226;
+        let _server = Server::start_with(port, upload_config(port, 1, 16, 10 * 1024 * 1024)).await;
+        let v = create_upload(port, KEY, "a.pdf").await;
+        let url = v["upload_url"].as_str().unwrap().to_string();
+
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        let resp = put_upload(&url, b"too late".to_vec()).await;
+        assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            resp.json::<serde_json::Value>().await.unwrap()["error"],
+            "unknown or expired upload"
+        );
+    });
+}
+
+/// 超过 max_attachment_bytes 的 PUT → 413，且该 id 之后不可用、临时文件已删
+#[test]
+fn upload_over_limit_returns_413_and_cleans_up() {
+    spawn_runtime_sync(async {
+        let port = 18227;
+        // 单附件上限 64KB，方便构造超限
+        let _server = Server::start_with(port, upload_config(port, 900, 16, 64 * 1024)).await;
+        let v = create_upload(port, KEY, "big.pdf").await;
+        let id = v["upload_id"].as_str().unwrap().to_string();
+        let url = v["upload_url"].as_str().unwrap().to_string();
+
+        let resp = put_upload(&url, vec![0u8; 64 * 1024 + 1]).await;
+        assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
+
+        // 该 id 已 abort：再 PUT 404
+        let again = put_upload(&url, b"x".to_vec()).await;
+        assert_eq!(again.status(), StatusCode::NOT_FOUND);
+
+        // 上传阶段是流式落盘，超限中止后临时文件应被删除
+        let count = _server.upload_tmp_file_count();
+        assert_eq!(count, 0, "超限后仍残留 {} 个临时文件", count);
+
+        // 该 id 也不能再用于发送
+        let json = send_with_attachment(port, KEY, json!({ "upload_id": id })).await;
+        assert_eq!(json["result"]["isError"], true);
+        assert!(json["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("不存在或已过期"));
+    });
+}
+
+/// 上传流式落盘：10MB 上传成功后 RSS 不应随文件线性增长（< 1 倍文件大小）
+#[test]
+fn upload_10mb_streams_to_disk() {
+    spawn_runtime_sync(async {
+        let port = 18228;
+        let server = Server::start_with(port, upload_cfg(port)).await;
+        let v = create_upload(port, KEY, "big.pdf").await;
+        let url = v["upload_url"].as_str().unwrap();
+
+        let before = rss_kb(server.child.id());
+        let data = pseudo_random(10 * 1024 * 1024);
+        let resp = put_upload(url, data.clone()).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let after = rss_kb(server.child.id());
+
+        let growth = after.saturating_sub(before);
+        println!(
+            "RSS: before={}KB after={}KB growth={}KB (file=10240KB)",
+            before, after, growth
+        );
+        assert!(
+            growth < 10 * 1024,
+            "RSS 增长 {}KB 接近/超过文件大小，说明未流式落盘",
+            growth
+        );
+        assert_eq!(
+            resp.json::<serde_json::Value>().await.unwrap()["sha256"],
+            sha256_hex(&data)
+        );
+    });
+}
+
+/// send_email 用 upload_id 的拒绝路径：owner 不一致 / 二选一 / sha256 不匹配 / 已消费
+#[test]
+fn send_email_upload_id_rejections() {
+    spawn_runtime_sync(async {
+        let port = 18229;
+        let _server = Server::start_with(port, upload_cfg(port)).await;
+
+        // 1) 另一个 API key 不能用别人的 upload_id
+        let v = create_upload(port, KEY, "a.pdf").await;
+        let id = v["upload_id"].as_str().unwrap().to_string();
+        assert_eq!(put_upload(v["upload_url"].as_str().unwrap(), b"data".to_vec()).await.status(), StatusCode::OK);
+        let json = send_with_attachment(port, SECOND_KEY, json!({ "upload_id": id })).await;
+        assert_eq!(json["result"]["isError"], true);
+        assert!(json["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("不属于当前 API key"));
+
+        // 2) content 与 upload_id 同时提供 / 都不提供
+        let b64 = base64::engine::general_purpose::STANDARD.encode(b"x");
+        let json = send_with_attachment(
+            port,
+            KEY,
+            json!({ "filename": "a.pdf", "content": b64, "upload_id": id }),
+        )
+        .await;
+        assert_eq!(json["result"]["isError"], true);
+        assert!(json["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("必须且只能提供 content 或 upload_id 之一"));
+
+        let json = send_with_attachment(port, KEY, json!({ "filename": "a.pdf" })).await;
+        assert_eq!(json["result"]["isError"], true);
+        assert!(json["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("必须且只能提供 content 或 upload_id 之一"));
+
+        // 3) sha256 不匹配
+        let json =
+            send_with_attachment(port, KEY, json!({ "upload_id": id, "sha256": "0".repeat(64) }))
+                .await;
+        assert_eq!(json["result"]["isError"], true);
+        assert!(json["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("sha256 校验失败"));
+    });
+}
+
+/// 已消费的 upload_id 不能再次使用（消费发生在通过全部附件校验之后）
+#[test]
+fn consumed_upload_id_cannot_be_reused() {
+    spawn_runtime_sync(async {
+        let port = 18230;
+        let _server = Server::start_with(port, upload_cfg(port)).await;
+        let v = create_upload(port, KEY, "a.pdf").await;
+        let id = v["upload_id"].as_str().unwrap().to_string();
+        let data = b"payload for consumption";
+        assert_eq!(
+            put_upload(v["upload_url"].as_str().unwrap(), data.to_vec())
+                .await
+                .status(),
+            StatusCode::OK
+        );
+
+        // 第一次：附件校验通过 → 条目被消费，随后卡在收件人白名单
+        let json = send_with_attachment(
+            port,
+            KEY,
+            json!({ "upload_id": id, "sha256": sha256_hex(data) }),
+        )
+        .await;
+        assert_eq!(json["result"]["isError"], true);
+        assert!(
+            json["result"]["content"][0]["text"]
+                .as_str()
+                .unwrap()
+                .contains("不在白名单内"),
+            "附件校验应已通过: {}",
+            json
+        );
+
+        // 第二次：id 已被消费
+        let json = send_with_attachment(port, KEY, json!({ "upload_id": id })).await;
+        assert_eq!(json["result"]["isError"], true);
+        assert!(json["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("不存在或已过期"));
+    });
+}
+
+/// 校验失败不消耗上传：改对 sha256 后同一 id 仍可用
+#[test]
+fn failed_validation_does_not_consume_upload() {
+    spawn_runtime_sync(async {
+        let port = 18231;
+        let _server = Server::start_with(port, upload_cfg(port)).await;
+        let v = create_upload(port, KEY, "a.pdf").await;
+        let id = v["upload_id"].as_str().unwrap().to_string();
+        let data = b"the real bytes";
+        assert_eq!(
+            put_upload(v["upload_url"].as_str().unwrap(), data.to_vec())
+                .await
+                .status(),
+            StatusCode::OK
+        );
+
+        // 先给一个错的 sha256：被拒
+        let json =
+            send_with_attachment(port, KEY, json!({ "upload_id": id, "sha256": "1".repeat(64) }))
+                .await;
+        assert!(json["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("sha256 校验失败"));
+
+        // 同一 id 用正确的 sha256 重试：仍可消费（说明上次失败没吃掉落盘数据）
+        let json = send_with_attachment(
+            port,
+            KEY,
+            json!({ "upload_id": id, "sha256": sha256_hex(data) }),
+        )
+        .await;
+        let text = json["result"]["content"][0]["text"].as_str().unwrap();
+        assert!(text.contains("不在白名单内"), "unexpected: {}", text);
+    });
+}
+
+/// 默认 10MB：PUT 一个 3MB 文件应被接受（旧配置下 1MB 就会 413）
+#[test]
+fn default_10mb_limit_allows_3mb_upload() {
+    spawn_runtime_sync(async {
+        let port = 18232;
+        let _server = Server::start_with(port, upload_config(port, 900, 16, 10 * 1024 * 1024)).await;
+        let v = create_upload(port, KEY, "big.pdf").await;
+        let data = pseudo_random(3 * 1024 * 1024);
+        let resp = put_upload(v["upload_url"].as_str().unwrap(), data.clone()).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            resp.json::<serde_json::Value>().await.unwrap()["size"],
+            3 * 1024 * 1024
+        );
+    });
+}
+
+/// 可复现的伪随机字节（避免测试依赖 rand 的版本差异）
+fn pseudo_random(len: usize) -> Vec<u8> {
+    let mut out = Vec::with_capacity(len);
+    let mut x: u64 = 0x2545F4914F6CDD1D;
+    for _ in 0..len {
+        // xorshift64*
+        x ^= x >> 12;
+        x ^= x << 25;
+        x ^= x >> 27;
+        out.push((x.wrapping_mul(0x2545F4914F6CDD1D) >> 56) as u8);
+    }
+    out
+}
+
+/// 进程 RSS（KB），读 /proc/<pid>/status
+fn rss_kb(pid: u32) -> u64 {
+    let status = fs::read_to_string(format!("/proc/{}/status", pid)).unwrap_or_default();
+    for line in status.lines() {
+        if let Some(rest) = line.strip_prefix("VmRSS:") {
+            return rest
+                .split_whitespace()
+                .next()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(0);
+        }
+    }
+    0
 }
