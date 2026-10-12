@@ -71,7 +71,7 @@ fn invalid_params(id: Option<Value>, msg: impl Into<String>) -> Reply {
 fn send_email_tool_schema() -> Value {
     json!({
         "name": TOOL_NAME,
-        "description": "通过 SMTP 发送一封通知邮件。支持多收件人与可选附件（附件 base64 编码，单附件与单次总大小上限见服务配置）。",
+        "description": "通过 SMTP 发送一封通知邮件。支持多收件人与可选附件。注意：附件以 base64 内容传输时，字符需由模型逐个生成，仅适合约 10KB 以内的小文件；文件较大或为二进制时请勿使用 base64。建议为每个附件提供 sha256 以便发现传输损坏。",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -91,11 +91,12 @@ fn send_email_tool_schema() -> Value {
                         "type": "object",
                         "properties": {
                             "filename": { "type": "string" },
-                            "content": { "type": "string", "description": "base64 编码的文件内容" }
+                            "content": { "type": "string", "description": "base64 编码的文件内容。解码时容忍空白/URL-safe 字母表/缺失 padding/data URI 前缀" },
+                            "sha256": { "type": "string", "description": "可选但强烈建议：解码后原始字节的 SHA-256 hex（64 字符，大小写均可）。用于发现内容在传输中被截断或改写；不匹配将被拒绝" }
                         },
                         "required": ["filename", "content"]
                     },
-                    "description": "可选附件列表（每个 ≤ 1MB）"
+                    "description": "可选附件列表。base64 内容仅适合约 10KB 以内的小文件——内容字符需由模型逐个生成，越大越容易丢字符或被截断；文件较大或为二进制时请勿使用 base64。建议同时传 sha256 以便发现损坏"
                 }
             },
             "required": ["subject", "body", "receiver"]
@@ -333,6 +334,92 @@ pass = "placeholder"
                 let result = r.result.unwrap();
                 let tools = result["tools"].as_array().unwrap();
                 assert!(tools.iter().any(|t| t["name"] == TOOL_NAME));
+            }
+            _ => panic!("expected response"),
+        }
+    }
+
+    #[tokio::test]
+    async fn tools_list_schema_exposes_sha256() {
+        let s = state();
+        let req = make_request("tools/list", json!({}));
+        let Reply::Response(r) = handle_request(&s, req).await else {
+            panic!("expected response");
+        };
+        let result = r.result.unwrap();
+        let tool = result["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == TOOL_NAME)
+            .expect("send_email tool present");
+
+        let props = &tool["inputSchema"]["properties"]["attachments"]["items"]["properties"];
+        assert!(
+            props["sha256"].is_object(),
+            "attachments.items.properties 应含 sha256，实际: {}",
+            props
+        );
+        let desc = props["sha256"]["description"].as_str().unwrap();
+        assert!(desc.contains("SHA-256"), "sha256 description: {}", desc);
+
+        // description 应写明 base64 仅适合小文件
+        let tool_desc = tool["description"].as_str().unwrap();
+        assert!(
+            tool_desc.contains("10KB"),
+            "tool description: {}",
+            tool_desc
+        );
+        let att_desc = tool["inputSchema"]["properties"]["attachments"]["description"]
+            .as_str()
+            .unwrap();
+        assert!(
+            att_desc.contains("10KB"),
+            "attachments description: {}",
+            att_desc
+        );
+
+        // 原有必填字段不受影响
+        let required = tool["inputSchema"]["properties"]["attachments"]["items"]["required"]
+            .as_array()
+            .unwrap();
+        assert!(required.iter().any(|v| v == "filename"));
+        assert!(required.iter().any(|v| v == "content"));
+        assert!(!required.iter().any(|v| v == "sha256"));
+    }
+
+    #[tokio::test]
+    async fn tools_call_rejects_bad_sha256_without_smtp() {
+        let s = state();
+        let b64 = base64::engine::general_purpose::STANDARD.encode(b"payload");
+        let req = make_request(
+            "tools/call",
+            json!({
+                "name": "send_email",
+                "arguments": {
+                    "subject": "t",
+                    "body": "b",
+                    "receiver": ["a@b.com"],
+                    "attachments": [ {
+                        "filename": "x.pdf",
+                        "content": b64,
+                        "sha256": "0".repeat(64)
+                    } ]
+                }
+            }),
+        );
+        match handle_request(&s, req).await {
+            Reply::Response(r) => {
+                let res = r.result.unwrap();
+                assert_eq!(res["isError"], true);
+                assert!(
+                    res["content"][0]["text"]
+                        .as_str()
+                        .unwrap()
+                        .contains("sha256 校验失败"),
+                    "{:?}",
+                    res
+                );
             }
             _ => panic!("expected response"),
         }
